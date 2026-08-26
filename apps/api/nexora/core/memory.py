@@ -28,6 +28,9 @@ class InMemoryMemoryStore:
     async def all(self) -> List[MemoryEntry]:
         return list(self._entries)
 
+    def clear(self):
+        self._entries.clear()
+
     def forbiddens(self) -> List[str]:
         return [e.capability for e in self._entries
                 if e.effect == "forbid" and e.capability]

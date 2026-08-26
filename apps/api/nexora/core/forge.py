@@ -47,3 +47,6 @@ class WorkflowForge:
             idmap[step["node_id"]] = node.node_id
             nodes.append(node)
         return nodes
+
+    def clear(self):
+        self._templates.clear()

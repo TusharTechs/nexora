@@ -307,4 +307,15 @@ async def list_capabilities():
 @app.get("/api/v1/capabilities/{capability_id}")
 async def get_capability(capability_id: str):
     cap = network.get(capability_id)
-   
+
+@app.post("/internal/reset")
+async def reset_all_state():
+    """Test-only: clears every in-memory singleton. Never exposed in production."""
+    repo.clear() if hasattr(repo, "clear") else None
+    audit.clear()
+    memory.clear()
+    bus.clear()
+    forge.clear()
+    if hasattr(registry, "provider") and hasattr(registry.provider, "reset_seed"):
+        registry.provider.reset_seed()
+    return {"status": "reset"}

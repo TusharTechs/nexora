@@ -33,6 +33,9 @@ class LocalEventBus:
     def history(self, mission_id: str) -> List[Dict]:
         return self._events.get(mission_id, [])
 
+    def clear(self):
+        self._events.clear()
+
 class PubSubEventBus:
     def __init__(self, project_id: str, topic: str):
         self.project_id = project_id

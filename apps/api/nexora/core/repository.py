@@ -16,6 +16,9 @@ class InMemoryMissionRepository:
     async def get(self, mission_id: str) -> Optional[Mission]:
         return self._store.get(mission_id)
 
+    def clear(self):
+        self._store.clear()
+
 class FirestoreMissionRepository:
     """Durable state. Honors FIRESTORE_EMULATOR_HOST for zero-cost local runs (ADR-035)."""
     def __init__(self, project_id: str):

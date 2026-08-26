@@ -36,6 +36,14 @@ def test_parallel_dag_and_dependencies():
     run(inner())
 
 def test_parallelism_observed():
+    """Self-contained: drives its own mission with independent research nodes
+    rather than relying on max_concurrency left over from another test —
+    reset_state_between_tests (conftest.py) now clears it before every test."""
+    async def inner():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            d = await post_and_wait(ac, GOAL)
+            assert d["state"] == "COMPLETED"
+    run(inner())
     assert runtime.registry.provider.max_concurrency >= 2
 
 def test_events_published():

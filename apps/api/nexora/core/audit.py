@@ -59,3 +59,6 @@ class AuditTrail:
         from collections import Counter
         c = Counter(e.kind.value for e in self._entries.get(mission_id, []))
         return dict(c)
+
+    def clear(self):
+        self._entries.clear()

@@ -19,11 +19,11 @@ type Capability = {
 };
 
 const CATEGORIES: Record<string, string[]> = {
-  COMMUNICATION: ["gmail.search", "gmail.read", "gmail.draft", "gmail.send"],
+  COMMUNICATION: ["gmail.search", "gmail.read", "gmail.draft", "gmail.send", "chat.notify"],
   KNOWLEDGE: ["drive.search", "drive.read", "drive.create_folder", "docs.create", "docs.read", "docs.update",
-              "sheets.create", "sheets.read", "sheets.write"],
-  OPERATIONS: ["calendar.search", "calendar.availability", "calendar.create_event"],
-  CREATIVE: [],   // Veo / Lyria land here in Phase 7
+              "sheets.create", "sheets.read", "sheets.write", "people.search", "multimodal.analyze"],
+  OPERATIONS: ["calendar.search", "calendar.availability", "calendar.create_event", "tasks.create", "forms.create"],
+  CREATIVE: ["slides.create", "veo.generate_video", "lyria.generate_audio"],
 };
 
 function categoryFor(id: string): string {

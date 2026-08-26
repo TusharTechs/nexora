@@ -34,6 +34,13 @@ class CapabilityNetwork:
         self._add("calendar.availability", "Check Availability", "calendar", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0005, 700, False, "Check attendee availability.")
         self._add("calendar.create_event", "Schedule Meeting", "calendar", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.001, 1500, True, "Create event with Meet link.")
         self._add("tasks.create", "Create Task", "tasks", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0005, 600, True, "Create a follow-up task.")
+        self._add("slides.create", "Create Presentation", "slides", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0015, 2000, True, "Create a Slides deck.")
+        self._add("chat.notify", "Notify Team", "chat", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0003, 400, False, "Post a Chat message.")
+        self._add("people.search", "Search People", "people", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0004, 500, False, "Search the directory.")
+        self._add("forms.create", "Create Form", "forms", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0008, 900, True, "Create a Google Form.")
+        self._add("multimodal.analyze", "Analyze Screenshot", "gemini", RiskLevel.LOW, ApprovalRequirement.NONE, 0.002, 1200, False, "Gemini multimodal extraction from an image.")
+        self._add("veo.generate_video", "Generate Video", "veo", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.05, 8000, True, "Veo launch video.")
+        self._add("lyria.generate_audio", "Generate Audio", "lyria", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.02, 5000, True, "Lyria audio briefing.")
 
     def register(self, capability: Capability):
         self._capabilities[capability.capability_id] = capability
