@@ -33,6 +33,7 @@ class CapabilityNetwork:
         self._add("calendar.search", "Search Events", "calendar", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0005, 600, False, "Search calendar events.")
         self._add("calendar.availability", "Check Availability", "calendar", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0005, 700, False, "Check attendee availability.")
         self._add("calendar.create_event", "Schedule Meeting", "calendar", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.001, 1500, True, "Create event with Meet link.")
+        self._add("tasks.create", "Create Task", "tasks", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0005, 600, True, "Create a follow-up task.")
 
     def register(self, capability: Capability):
         self._capabilities[capability.capability_id] = capability

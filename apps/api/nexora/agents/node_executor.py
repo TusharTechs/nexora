@@ -109,6 +109,14 @@ class NodeExecutor:
         elif node.capability_id == "calendar.create_event":
             artifact = await provider.create_event(mission_id, node.node_id,
                 node.inputs.get("title", "Meeting"), node.inputs.get("attendees", []))
+        elif node.capability_id == "gmail.draft":
+            artifact = await provider.draft_email(node.inputs.get("to", []),
+                                                  node.inputs.get("subject", ""),
+                                                  node.inputs.get("body", ""))
+        elif node.capability_id == "tasks.create":
+            artifact = await provider.create_task(mission_id, node.node_id,
+                                                  node.inputs.get("title", "Task"),
+                                                  node.inputs.get("notes", ""))
         else:
             raise ValueError(f"No executor route for {node.capability_id}")
 

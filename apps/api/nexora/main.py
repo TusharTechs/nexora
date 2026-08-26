@@ -50,6 +50,9 @@ class NodeRef(BaseModel):
 class ApprovalRequest(BaseModel):
     approved: bool
 
+class InterventionRequest(BaseModel):
+    instruction: str
+
 async def _get_or_404(mission_id: str) -> Mission:
     mission = await repo.get(mission_id)
     if not mission:
@@ -119,11 +122,17 @@ async def decide_approval(mission_id: str, node_id: str, body: ApprovalRequest):
         await repo.save(mission)
         await runtime.dispatch(mission_id, node_id)
     else:
-        node.status = "FAILED"
-        await repo.save(mission)
-        await runtime.supervisor.check_completion(mission_id)
+        await runtime.handle_failure(mission_id, node_id, "approval_rejected")
     return {"node_id": node_id, "approved": body.approved}
 
+@app.post("/api/v1/missions/{mission_id}/intervene")
+async def intervene(mission_id: str, body: InterventionRequest):
+    mission = await _get_or_404(mission_id)
+    try:
+        return await runtime.apply_intervention(mission, body.instruction)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    
 @app.websocket("/api/v1/missions/{mission_id}/ws")
 async def mission_ws(websocket: WebSocket, mission_id: str):
     await websocket.accept()

@@ -12,6 +12,7 @@ class MockWorkspaceProvider:
     """
     def __init__(self):
         self._docs, self._sheets, self._events, self._sent = {}, {}, {}, {}
+        self._drafts, self._tasks = {}, {}
         self._emails = {
             "msg_clean": {
                 "id": "msg_clean", "subject": "URGENT: Checkout Down",
@@ -62,7 +63,21 @@ class MockWorkspaceProvider:
         self._sent[aid] = {"to": to, "subject": subject}
         return Artifact(artifact_id=aid, mission_id="-", node_id="-", type="EMAIL",
                         provider="mock", resource_id=aid, uri=f"mock://sent/{aid}")
+    
+    async def draft_email(self, to, subject, body) -> Artifact:
+        await self._enter("gmail.draft")
+        aid = str(uuid.uuid4())
+        self._drafts[aid] = {"to": to, "subject": subject}
+        return Artifact(artifact_id=aid, mission_id="-", node_id="-", type="DRAFT",
+                        provider="mock", resource_id=aid, uri=f"mock://drafts/{aid}")
 
+    async def create_task(self, mission_id, node_id, title, notes) -> Artifact:
+        await self._enter("tasks.create")
+        aid = str(uuid.uuid4())
+        self._tasks[aid] = {"title": title, "notes": notes}
+        return Artifact(artifact_id=aid, mission_id=mission_id, node_id=node_id, type="TASK",
+                        provider="mock", resource_id=aid, uri=f"mock://tasks/{aid}")
+    
     async def search_files(self, query) -> List[Dict]:
         await self._enter("drive.search")
         return [{"id": f["id"], "name": f["name"], "type": f["type"]} for f in self._files.values()]
@@ -82,5 +97,6 @@ class MockWorkspaceProvider:
                         provider="mock", resource_id=aid, uri=f"mock://calendar/{aid}")
 
     async def verify_artifact(self, artifact: Artifact) -> bool:
-        store = {"DOC": self._docs, "SHEET": self._sheets, "EVENT": self._events, "EMAIL": self._sent}
-        return artifact.resource_id in store.get(artifact.type, {})
+                store = {"DOC": self._docs, "SHEET": self._sheets, "EVENT": self._events,
+                 "EMAIL": self._sent, "DRAFT": self._drafts, "TASK": self._tasks}
+                return artifact.resource_id in store.get(artifact.type, {})

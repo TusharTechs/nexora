@@ -26,5 +26,5 @@ class HealthCalculator:
             failed_nodes=[n.node_id for n in mission.nodes if n.status == "FAILED"],
             retry_count=sum(n.retries for n in mission.nodes),
             current_execution_state=mission.state,
-            replan_count=0,
+            replan_count=mission.replan_count,
         )

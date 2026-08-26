@@ -20,6 +20,7 @@ class MissionState(str, Enum):
     CRITICIZING = "CRITICIZING"
     EXECUTING = "EXECUTING"
     BLOCKED = "BLOCKED"
+    REPLANNING = "REPLANNING"
     VERIFYING = "VERIFYING"
     COMPLETED = "COMPLETED"
     PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
@@ -82,6 +83,7 @@ class MissionNode(BaseModel):
     status: Literal["PENDING", "RUNNING", "SUCCESS", "FAILED", "SKIPPED", "WAITING_APPROVAL"] = "PENDING"
     approved: bool = False
     retries: int = 0
+    replaced_by: Optional[str] = None
     rationale_summary: str = ""
     firewall_summary: str = ""    # ADR-037 — safe scan summary
     started_at: Optional[datetime] = None
@@ -167,4 +169,5 @@ class Mission(BaseModel):
     verification: Optional[VerificationResult] = None
     health: Optional[MissionHealth] = None
     execution_mode: ExecutionMode = ExecutionMode.MOCK
+    replan_count: int = 0
     created_at: datetime = Field(default_factory=utcnow)

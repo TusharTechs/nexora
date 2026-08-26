@@ -5,8 +5,9 @@ VALID_TRANSITIONS = {
     MissionState.INTERPRETING: [MissionState.PLANNING, MissionState.FAILED],
     MissionState.PLANNING: [MissionState.CRITICIZING, MissionState.FAILED],
     MissionState.CRITICIZING: [MissionState.EXECUTING, MissionState.FAILED],
-    MissionState.EXECUTING: [MissionState.VERIFYING, MissionState.BLOCKED, MissionState.FAILED],
-    MissionState.BLOCKED: [MissionState.EXECUTING, MissionState.VERIFYING, MissionState.FAILED],
+    MissionState.EXECUTING: [MissionState.VERIFYING, MissionState.BLOCKED, MissionState.REPLANNING, MissionState.FAILED],
+    MissionState.BLOCKED: [MissionState.EXECUTING, MissionState.VERIFYING, MissionState.REPLANNING, MissionState.FAILED],
+    MissionState.REPLANNING: [MissionState.EXECUTING, MissionState.FAILED],
     MissionState.VERIFYING: [MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS, MissionState.FAILED],
 }
 

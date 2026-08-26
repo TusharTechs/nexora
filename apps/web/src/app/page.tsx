@@ -6,27 +6,21 @@ import type { ReactNode } from "react";
 const API = "http://localhost:8000";
 
 type AuditEntry = {
-  entry_id: string;
-  kind: string;
-  severity: string;
-  title: string;
-  detail: string;
-  metadata: any;
-  timestamp: string;
-  node_id?: string;
+  entry_id: string; kind: string; severity: string; title: string;
+  detail: string; metadata: any; timestamp: string; node_id?: string;
 };
 
+const TERMINAL = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"];
+
 export default function Home() {
-  const [goal, setGoal] = useState(
-    "Search emails then write the incident report."
-  );
+  const [goal, setGoal] = useState("Search emails then write the incident report.");
+  const [intervention, setIntervention] = useState("");
   const [mission, setMission] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [auditTrail, setAuditTrail] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
-  const wsOk = useRef(false);
 
   const refresh = async (mid: string) => {
     const r = await fetch(`${API}/api/v1/missions/${mid}`);
@@ -41,7 +35,6 @@ export default function Home() {
     try {
       ws = new WebSocket(`ws://localhost:8000/api/v1/missions/${mid}/ws`);
       ws.onmessage = () => refresh(mid);
-      ws.onopen = () => { wsOk.current = true; };
       ws.onerror = () => { poll = setInterval(() => refresh(mid), 1500); };
     } catch {
       poll = setInterval(() => refresh(mid), 1500);
@@ -50,12 +43,9 @@ export default function Home() {
   }, [mission?.mission_id]);
 
   useEffect(() => {
-    if (!mission) return;
-    const terminal = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"].includes(mission.state);
-    if (terminal) {
-      fetch(`${API}/api/v1/missions/${mission.mission_id}/events`).then(r => r.ok ? r.json() : []).then(setEvents);
-      fetch(`${API}/api/v1/missions/${mission.mission_id}/audit`).then(r => r.ok ? r.json() : []).then(setAuditTrail);
-    }
+    if (!mission || !TERMINAL.includes(mission.state)) return;
+    fetch(`${API}/api/v1/missions/${mission.mission_id}/events`).then(r => r.ok ? r.json() : []).then(setEvents);
+    fetch(`${API}/api/v1/missions/${mission.mission_id}/audit`).then(r => r.ok ? r.json() : []).then(setAuditTrail);
   }, [mission?.state]);
 
   const launch = async () => {
@@ -78,10 +68,20 @@ export default function Home() {
     refresh(mission.mission_id);
   };
 
+  const sendIntervention = async () => {
+    if (!intervention.trim() || !mission) return;
+    const r = await fetch(`${API}/api/v1/missions/${mission.mission_id}/intervene`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: intervention }),
+    });
+    if (!r.ok) setError(`Intervention rejected (${r.status})`);
+    setIntervention("");
+    refresh(mission.mission_id);
+  };
+
   const h = mission?.health;
   const firewallAlerts = auditTrail.filter(a => a.kind === "FIREWALL_DETECT").length;
-  const policyBlocks = auditTrail.filter(a =>
-    a.kind === "POLICY_DECISION" && a.metadata?.decision === "BLOCK").length;
+  const policyBlocks = auditTrail.filter(a => a.kind === "POLICY_DECISION" && a.metadata?.decision === "BLOCK").length;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-8 font-mono">
@@ -93,7 +93,7 @@ export default function Home() {
         <a href="/explorer" className="text-xs text-zinc-400 underline">Capability Explorer →</a>
       </header>
 
-      <section className="mb-6 flex gap-2">
+      <section className="mb-4 flex gap-2">
         <input value={goal} onChange={(e) => setGoal(e.target.value)}
           className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm" />
         <button onClick={launch} disabled={loading}
@@ -101,6 +101,18 @@ export default function Home() {
           {loading ? "Launching…" : "Launch Mission"}
         </button>
       </section>
+
+      {mission && !TERMINAL.includes(mission.state) && (
+        <section className="mb-6 flex gap-2">
+          <input value={intervention} onChange={(e) => setIntervention(e.target.value)}
+            placeholder='Tell NEXORA what should change — e.g. "Stop all external communication." / "Add a tracker sheet."'
+            className="flex-1 rounded border border-violet-800 bg-zinc-900 px-3 py-2 text-sm" />
+          <button onClick={sendIntervention}
+            className="rounded bg-violet-600 px-4 py-2 text-sm font-semibold text-zinc-950">
+            Intervene
+          </button>
+        </section>
+      )}
 
       {error && <p className="mb-4 text-red-400">Error: {error}</p>}
 
@@ -114,7 +126,7 @@ export default function Home() {
 
           <Panel title="PLAN (DAG) — click a node for WHY">
             {mission.nodes.map((n: any) => (
-              <div key={n.node_id} className="mb-2 text-xs cursor-pointer hover:bg-zinc-800/50 rounded p-1"
+              <div key={n.node_id} className="mb-2 cursor-pointer rounded p-1 text-xs hover:bg-zinc-800/50"
                    onClick={() => setSelectedNode(n)}>
                 <span className="text-emerald-400">{n.capability_id}</span>{" "}
                 <span className={
@@ -125,9 +137,8 @@ export default function Home() {
                   [{n.status}{n.retries ? ` retry×${n.retries}` : ""}]
                 </span>
                 {n.condition && <span className="text-violet-400">  conditional</span>}
-                {n.firewall_summary && (
-                  <span className="ml-2 text-amber-300">🛡 {n.firewall_summary}</span>
-                )}
+                {n.replaced_by && <span className="text-violet-400">  →replanned</span>}
+                {n.firewall_summary && <span className="ml-2 text-amber-300">🛡 {n.firewall_summary}</span>}
               </div>
             ))}
             {mission.nodes.filter((n: any) => n.status === "WAITING_APPROVAL").map((n: any) => (
@@ -148,19 +159,18 @@ export default function Home() {
             <KV k="Blocked" v={(h?.blocked_objectives ?? []).join(", ") || "none"} />
             <KV k="Failed nodes" v={String((h?.failed_nodes ?? []).length)} />
             <KV k="Retries" v={String(h?.retry_count ?? 0)} />
-            <KV k="Replans" v={String(h?.replan_count ?? 0)} />
+            <KV k="Replans" v={String(h?.replan_count ?? 0)} highlight={(h?.replan_count ?? 0) > 0} />
           </Panel>
 
           <Panel title="🛡 SECURITY CENTER">
             <KV k="Firewall detections" v={String(firewallAlerts)} highlight={firewallAlerts > 0} />
             <KV k="Policy blocks" v={String(policyBlocks)} highlight={policyBlocks > 0} />
             <KV k="Audit events" v={String(auditTrail.length)} />
-            <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
+            <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
               {auditTrail.slice(0, 8).map((a) => (
                 <p key={a.entry_id} className={`text-xs ${
                   a.severity === "ALERT" ? "text-red-400" :
-                  a.severity === "WARN"  ? "text-amber-300" : "text-zinc-400"
-                }`}>
+                  a.severity === "WARN"  ? "text-amber-300" : "text-zinc-400"}`}>
                   [{a.kind}] {a.title} — {a.detail}
                 </p>
               ))}
@@ -198,66 +208,51 @@ function WhyModal({ node, mission, audit, onClose }: {
   node: any; mission: any; audit: AuditEntry[]; onClose: () => void;
 }) {
   const receipt = mission.receipts.find((r: any) => r.node_id === node.node_id);
-  const evidence = mission.evidence.filter((e: any) =>
-    e.derivation_path.includes(node.node_id));
+  const evidence = mission.evidence.filter((e: any) => e.derivation_path.includes(node.node_id));
   const fw = node.outputs?.search_results_firewall || node.outputs?.email_firewall;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-         onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6"
            onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-baseline justify-between">
           <h2 className="text-lg font-bold text-emerald-400">Why: {node.capability_id}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-200">✕</button>
         </div>
-
-        <Section title="Rationale">
-          <p className="text-sm text-zinc-200">{node.rationale_summary || "—"}</p>
-        </Section>
-
+        <Section title="Rationale"><p className="text-sm text-zinc-200">{node.rationale_summary || "—"}</p></Section>
         <Section title="Policy decision">
           <p className="text-sm">
             <span className={receipt?.policy_decision === "ALLOW" ? "text-emerald-400" : "text-amber-400"}>
               {receipt?.policy_decision ?? "—"}
             </span>
-            {node.firewall_summary && <span className="ml-2 text-amber-300">🛡 {node.firewall_summary}</span>}
+            {node.replaced_by && <span className="ml-2 text-violet-400">replanned → {node.replaced_by}</span>}
           </p>
         </Section>
-
         {fw && (
           <Section title="Content Firewall">
             <p className="text-sm text-zinc-200">Verdict: <b>{fw.verdict}</b></p>
             {fw.per_message && fw.per_message.map((m: any, i: number) => (
               <p key={i} className="mt-1 text-xs text-zinc-400">
                 {m.id}: {m.verdict}
-                {m.matches?.length > 0 && <span className="text-red-400"> — {m.matches.map((x:any)=>x.category).join(", ")}</span>}
+                {m.matches?.length > 0 && <span className="text-red-400"> — {m.matches.map((x: any) => x.category).join(", ")}</span>}
               </p>
             ))}
           </Section>
         )}
-
         <Section title="Evidence">
           {evidence.length === 0 && <p className="text-sm text-zinc-500">—</p>}
           {evidence.map((e: any) => (
             <p key={e.evidence_id} className="mb-1 text-sm text-zinc-300">“{e.claim}” ({e.confidence})</p>
           ))}
         </Section>
-
         <Section title="Audit events for this node">
           {audit.length === 0 && <p className="text-sm text-zinc-500">—</p>}
           {audit.map((a) => (
-            <p key={a.entry_id} className="mb-1 text-xs text-zinc-400">
-              [{a.kind}] {a.title} — {a.detail}
-            </p>
+            <p key={a.entry_id} className="mb-1 text-xs text-zinc-400">[{a.kind}] {a.title} — {a.detail}</p>
           ))}
         </Section>
-
         <Section title="Action receipt">
-          {receipt ? (
-            <pre className="overflow-x-auto text-xs text-zinc-300">{JSON.stringify(receipt, null, 2)}</pre>
-          ) : (
-            <p className="text-sm text-zinc-500">Not executed yet.</p>
-          )}
+          {receipt ? <pre className="overflow-x-auto text-xs text-zinc-300">{JSON.stringify(receipt, null, 2)}</pre>
+                   : <p className="text-sm text-zinc-500">Not executed yet.</p>}
         </Section>
       </div>
     </div>
