@@ -12,6 +12,7 @@ class ExecutionMode(str, Enum):
     MOCK = "MOCK"
     REPLAY = "REPLAY"
     SIMULATION = "SIMULATION"
+    ACME_LABS = "ACME_LABS"
 
 class MissionState(str, Enum):
     CREATED = "CREATED"

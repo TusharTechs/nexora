@@ -22,6 +22,8 @@ from nexora.agents.critic import PlanCritic
 from nexora.providers.mock_workspace import MockWorkspaceProvider
 from nexora.providers.replay_provider import ReplayProvider
 from nexora.providers.protocols import ProviderRegistry
+from nexora.providers.acme_labs import AcmeLabsProvider
+from nexora.benchmarks import BENCHMARKS, evaluate_mission
 
 app = FastAPI(title="NEXORA API")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
@@ -41,6 +43,8 @@ def build_registry(mode: ExecutionMode) -> ProviderRegistry:
         from nexora.providers.live_workspace import LiveWorkspaceProvider
         return ProviderRegistry(LiveWorkspaceProvider(LocalCredentialStore()))
     return ProviderRegistry(MockWorkspaceProvider())
+    if mode == ExecutionMode.ACME_LABS:
+        return ProviderRegistry(AcmeLabsProvider())
 
 registry = build_registry(ExecutionMode(os.getenv("EXECUTION_MODE", "MOCK")))
 runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
@@ -319,3 +323,30 @@ async def reset_all_state():
     if hasattr(registry, "provider") and hasattr(registry.provider, "reset_seed"):
         registry.provider.reset_seed()
     return {"status": "reset"}
+
+@app.get("/api/v1/benchmarks")
+async def list_benchmarks():
+    return [{"name": b.name, "goal": b.goal, "expected_artifacts": b.expected_artifacts,
+             "expected_nodes": b.expected_nodes, "min_evidence": b.min_evidence}
+            for b in BENCHMARKS]
+
+@app.post("/api/v1/benchmarks/{benchmark_name}/run")
+async def run_benchmark(benchmark_name: str):
+    bm = next((b for b in BENCHMARKS if b.name == benchmark_name), None)
+    if bm is None:
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+    old_registry = registry
+    runtime.registry = ProviderRegistry(AcmeLabsProvider())
+    try:
+        r = await create_mission(GoalRequest(goal=bm.goal, execution_mode=ExecutionMode.ACME_LABS))
+        return r.model_dump(mode="json")
+    finally:
+        runtime.registry = old_registry
+
+@app.get("/api/v1/missions/{mission_id}/benchmark")
+async def get_benchmark_result(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    bm = next((b for b in BENCHMARKS if b.goal == mission.goal), None)
+    if bm is None:
+        raise HTTPException(status_code=404, detail="Mission is not a benchmark")
+    return evaluate_mission(mission, bm)
