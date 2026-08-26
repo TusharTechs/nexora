@@ -2,7 +2,8 @@ import os
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from packages.core.models import Mission, MissionState, ExecutionMode
+from packages.core.models import (Mission, MissionState, ExecutionMode, MissionIntent,
+                                  MissionNode, MemoryEntry, MemoryType, MemoryScope)
 from nexora.core.repository import build_repository
 from nexora.core.state_machine import MissionStateMachine, InvalidStateTransitionError
 from nexora.core.capability_network import CapabilityNetwork
@@ -12,11 +13,14 @@ from nexora.core.event_bus import LocalEventBus
 from nexora.core.runtime import MissionRuntime
 from nexora.core.security import ContentFirewall
 from nexora.core.audit import AuditTrail, AuditEntry, AuditKind
+from nexora.core.memory import InMemoryMemoryStore, TeachExtractor
+from nexora.core.forge import WorkflowForge
 from nexora.core.credential_store import LocalCredentialStore
+from nexora.core.model_router import ModelRouter
 from nexora.agents.interpreter import MissionInterpreter
 from nexora.agents.critic import PlanCritic
-from nexora.core.model_router import ModelRouter
 from nexora.providers.mock_workspace import MockWorkspaceProvider
+from nexora.providers.replay_provider import ReplayProvider
 from nexora.providers.protocols import ProviderRegistry
 
 app = FastAPI(title="NEXORA API")
@@ -29,6 +33,8 @@ router = ModelRouter()
 bus = LocalEventBus()
 firewall = ContentFirewall()
 audit = AuditTrail()
+memory = InMemoryMemoryStore()
+forge = WorkflowForge(network)
 
 def build_registry(mode: ExecutionMode) -> ProviderRegistry:
     if mode == ExecutionMode.LIVE:
@@ -37,7 +43,10 @@ def build_registry(mode: ExecutionMode) -> ProviderRegistry:
     return ProviderRegistry(MockWorkspaceProvider())
 
 registry = build_registry(ExecutionMode(os.getenv("EXECUTION_MODE", "MOCK")))
-runtime = MissionRuntime(repo, network, registry, bus, firewall, audit)
+runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
+
+
+# ---------------- Request models ----------------
 
 class GoalRequest(BaseModel):
     goal: str
@@ -53,16 +62,24 @@ class ApprovalRequest(BaseModel):
 class InterventionRequest(BaseModel):
     instruction: str
 
+class TeachRequest(BaseModel):
+    instruction: str
+
+
 async def _get_or_404(mission_id: str) -> Mission:
     mission = await repo.get(mission_id)
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
     return mission
 
+
 @app.on_event("startup")
 async def _startup():
     audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
                             title="api.started", detail="NEXORA API started."))
+
+
+# ---------------- Missions ----------------
 
 @app.post("/api/v1/missions", response_model=Mission)
 async def create_mission(req: GoalRequest):
@@ -73,7 +90,7 @@ async def create_mission(req: GoalRequest):
         mission.intent = await MissionInterpreter(router).interpret(req.goal)
 
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
-        mission.constitution = ConstitutionBuilder(network).build(mission.mission_id, mission.intent)
+        mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
         mission.nodes = await WorkflowCompiler(network).compile(mission.goal, mission.intent, mission.constitution)
 
         mission.state = MissionStateMachine.transition(mission.state, MissionState.CRITICIZING)
@@ -97,10 +114,13 @@ async def create_mission(req: GoalRequest):
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/internal/execute_node")
 async def execute_node_internal(ref: NodeRef):
+    """Cloud Tasks worker target (also used by LocalTaskDispatcher)."""
     await runtime.process_node(ref.mission_id, ref.node_id)
     return {"status": "dispatched"}
+
 
 @app.post("/api/v1/missions/{mission_id}/approvals/{node_id}")
 async def decide_approval(mission_id: str, node_id: str, body: ApprovalRequest):
@@ -109,8 +129,7 @@ async def decide_approval(mission_id: str, node_id: str, body: ApprovalRequest):
     if node is None or node.status != "WAITING_APPROVAL":
         raise HTTPException(status_code=409, detail="Node not awaiting approval")
     audit.record(AuditEntry(mission_id=mission_id, node_id=node_id,
-                            kind=AuditKind.APPROVAL_DECIDED,
-                            severity="INFO",
+                            kind=AuditKind.APPROVAL_DECIDED, severity="INFO",
                             title="approval_decided",
                             detail=f"Approval {'GRANTED' if body.approved else 'REJECTED'} for {node.capability_id}",
                             metadata={"approved": body.approved}))
@@ -122,8 +141,13 @@ async def decide_approval(mission_id: str, node_id: str, body: ApprovalRequest):
         await repo.save(mission)
         await runtime.dispatch(mission_id, node_id)
     else:
+        await memory.add(MemoryEntry(type=MemoryType.CORRECTION, scope=MemoryScope.ORG,
+                                     content=f"User rejected {node.capability_id}",
+                                     capability=node.capability_id, effect="correction",
+                                     provenance="approval_rejected"))
         await runtime.handle_failure(mission_id, node_id, "approval_rejected")
     return {"node_id": node_id, "approved": body.approved}
+
 
 @app.post("/api/v1/missions/{mission_id}/intervene")
 async def intervene(mission_id: str, body: InterventionRequest):
@@ -132,7 +156,8 @@ async def intervene(mission_id: str, body: InterventionRequest):
         return await runtime.apply_intervention(mission, body.instruction)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    
+
+
 @app.websocket("/api/v1/missions/{mission_id}/ws")
 async def mission_ws(websocket: WebSocket, mission_id: str):
     await websocket.accept()
@@ -149,6 +174,89 @@ async def mission_ws(websocket: WebSocket, mission_id: str):
         pass
     finally:
         bus.unsubscribe(q)
+
+
+# ---------------- Memory / Teach / Forge / Replay ----------------
+
+@app.post("/api/v1/memory/teach")
+async def teach(body: TeachRequest):
+    entry = TeachExtractor().extract(body.instruction)
+    await memory.add(entry)
+    return entry.model_dump(mode="json")
+
+@app.get("/api/v1/memory")
+async def list_memory():
+    return [e.model_dump(mode="json") for e in await memory.all()]
+
+@app.post("/api/v1/missions/{mission_id}/forge")
+async def forge_workflow(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    if mission.state not in (MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS):
+        raise HTTPException(status_code=409, detail="Only completed missions can be forged")
+    template = forge.forge(mission)
+    await memory.add(MemoryEntry(type=MemoryType.LEARNED_WORKFLOW, scope=MemoryScope.WORKFLOW,
+                                 content=template.name, provenance="forge"))
+    return template.model_dump(mode="json")
+
+@app.get("/api/v1/workflows")
+async def list_workflows():
+    return [t.model_dump(mode="json") for t in forge.list()]
+
+@app.post("/api/v1/workflows/{template_id}/run")
+async def run_workflow(template_id: str):
+    template = forge.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    mission = Mission(goal=template.name, execution_mode=ExecutionMode.MOCK)
+    mission.intent = MissionIntent(objective=template.name)
+    mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
+    mission.nodes = forge.build_nodes(template)
+    critique = await PlanCritic(network).critique(mission.nodes, mission.constitution)
+    if not critique["approved"]:
+        raise HTTPException(status_code=400, detail=f"Template rejected: {critique['issues']}")
+    mission.state = MissionState.EXECUTING
+    await repo.save(mission)
+    await bus.publish("MISSION.CREATED", {"mission_id": mission.mission_id, "goal": template.name})
+    for node in mission.nodes:
+        if not node.depends_on:
+            await runtime.dispatch(mission.mission_id, node.node_id)
+    return mission.model_dump(mode="json")
+
+@app.post("/api/v1/missions/{mission_id}/replay")
+async def replay_mission(mission_id: str):
+    src = await _get_or_404(mission_id)
+    if src.state not in (MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS, MissionState.FAILED):
+        raise HTTPException(status_code=409, detail="Mission not terminal")
+    replay_m = Mission(goal=src.goal, execution_mode=ExecutionMode.REPLAY)
+    replay_m.intent = src.intent
+    if src.constitution:
+        replay_m.constitution = src.constitution.model_copy()
+    else:
+        replay_m.constitution = ConstitutionBuilder(network, memory).build(
+            replay_m.mission_id, src.intent or MissionIntent(objective=src.goal))
+    idmap = {}
+    for n in src.nodes:
+        if n.status != "SUCCESS":
+            continue
+        new = MissionNode(capability_id=n.capability_id, inputs=dict(n.inputs),
+                          depends_on=[idmap[d] for d in n.depends_on if d in idmap],
+                          rationale_summary=f"Replay of {n.node_id}.")
+        idmap[n.node_id] = new.node_id
+        replay_m.nodes.append(new)
+    replay_m.state = MissionStateMachine.transition(replay_m.state, MissionState.INTERPRETING)
+    replay_m.state = MissionStateMachine.transition(replay_m.state, MissionState.PLANNING)
+    replay_m.state = MissionStateMachine.transition(replay_m.state, MissionState.CRITICIZING)
+    replay_m.state = MissionStateMachine.transition(replay_m.state, MissionState.EXECUTING)
+    await repo.save(replay_m)
+    rt = MissionRuntime(repo, network, ProviderRegistry(ReplayProvider(src)),
+                        bus, firewall, audit, memory)
+    for node in replay_m.nodes:
+        if not node.depends_on:
+            await rt.dispatch(replay_m.mission_id, node.node_id)
+    return replay_m.model_dump(mode="json")
+
+
+# ---------------- Read endpoints ----------------
 
 @app.get("/api/v1/missions/{mission_id}", response_model=Mission)
 async def get_mission(mission_id: str):
@@ -189,6 +297,9 @@ async def get_verification(mission_id: str):
 async def get_constitution(mission_id: str):
     return (await _get_or_404(mission_id)).constitution
 
+
+# ---------------- Capability Network ----------------
+
 @app.get("/api/v1/capabilities")
 async def list_capabilities():
     return [network.get(cid).model_dump(mode="json") for cid in network.ids()]
@@ -196,6 +307,4 @@ async def list_capabilities():
 @app.get("/api/v1/capabilities/{capability_id}")
 async def get_capability(capability_id: str):
     cap = network.get(capability_id)
-    if cap is None:
-        raise HTTPException(status_code=404, detail="Capability not found")
-    return cap.model_dump(mode="json")
+   

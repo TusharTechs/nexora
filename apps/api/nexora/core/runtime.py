@@ -17,14 +17,15 @@ RESEARCH_CAPS = ("gmail.search", "drive.search")
 
 
 class MissionRuntime:
-    def __init__(self, repo, network, registry, bus, firewall: ContentFirewall, audit: AuditTrail):
+    def __init__(self, repo, network, registry, bus, firewall: ContentFirewall, audit: AuditTrail, memory=None):
         self.repo = repo
         self.network = network
         self.registry = registry
         self.bus = bus
         self.firewall = firewall
         self.audit = audit
-        self.executor = NodeExecutor(PolicyEngine(network), network, registry, firewall, audit)
+        self.memory = memory
+        self.executor = NodeExecutor(PolicyEngine(network, memory), network, registry, firewall, audit)
         self.supervisor = MissionSupervisor(repo, bus, registry, network, audit)
         self.replanner = Replanner(network)
         self.critic = PlanCritic(network)
@@ -154,6 +155,13 @@ class MissionRuntime:
                 n.completed_at = utcnow()
                 n.rationale_summary += " [invalidated: intervention]"
                 invalidated.append(n.node_id)
+                if self.memory is not None:
+                    from packages.core.models import MemoryEntry, MemoryType, MemoryScope
+                    await self.memory.add(MemoryEntry(
+                        type=MemoryType.CORRECTION, scope=MemoryScope.ORG,
+                        content=f"Intervention invalidated {n.capability_id}",
+                        capability=n.capability_id, effect="correction",
+                        provenance="intervention"))
                 repl = await self.replanner.build_fallback(mission, n, "intervention")
                 if repl:
                     n.replaced_by = repl.node_id

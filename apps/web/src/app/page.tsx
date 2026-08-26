@@ -1,44 +1,48 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 const API = "http://localhost:8000";
-
-type AuditEntry = {
-  entry_id: string; kind: string; severity: string; title: string;
-  detail: string; metadata: any; timestamp: string; node_id?: string;
-};
-
 const TERMINAL = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"];
+
+type AuditEntry = { entry_id: string; kind: string; severity: string; title: string;
+  detail: string; metadata: any; timestamp: string; node_id?: string };
 
 export default function Home() {
   const [goal, setGoal] = useState("Search emails then write the incident report.");
   const [intervention, setIntervention] = useState("");
+  const [teach, setTeach] = useState("");
   const [mission, setMission] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [auditTrail, setAuditTrail] = useState<AuditEntry[]>([]);
+  const [memoryList, setMemoryList] = useState<any[]>([]);
+  const [workflows, setWorkflows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
+  const [openEvidence, setOpenEvidence] = useState<string | null>(null);
 
   const refresh = async (mid: string) => {
     const r = await fetch(`${API}/api/v1/missions/${mid}`);
     if (r.ok) setMission(await r.json());
   };
+  const refreshLearning = async () => {
+    const m = await fetch(`${API}/api/v1/memory`); if (m.ok) setMemoryList(await m.json());
+    const w = await fetch(`${API}/api/v1/workflows`); if (w.ok) setWorkflows(await w.json());
+  };
+
+  useEffect(() => { refreshLearning(); }, []);
 
   useEffect(() => {
     if (!mission) return;
     const mid = mission.mission_id;
-    let poll: any = null;
-    let ws: WebSocket | null = null;
+    let poll: any = null; let ws: WebSocket | null = null;
     try {
       ws = new WebSocket(`ws://localhost:8000/api/v1/missions/${mid}/ws`);
       ws.onmessage = () => refresh(mid);
       ws.onerror = () => { poll = setInterval(() => refresh(mid), 1500); };
-    } catch {
-      poll = setInterval(() => refresh(mid), 1500);
-    }
+    } catch { poll = setInterval(() => refresh(mid), 1500); }
     return () => { ws?.close(); if (poll) clearInterval(poll); };
   }, [mission?.mission_id]);
 
@@ -49,7 +53,7 @@ export default function Home() {
   }, [mission?.state]);
 
   const launch = async () => {
-    setLoading(true); setError(null); setMission(null); setEvents([]); setAuditTrail([]);
+    setLoading(true); setError(null); setMission(null);
     try {
       const r = await fetch(`${API}/api/v1/missions`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -70,13 +74,30 @@ export default function Home() {
 
   const sendIntervention = async () => {
     if (!intervention.trim() || !mission) return;
-    const r = await fetch(`${API}/api/v1/missions/${mission.mission_id}/intervene`, {
+    await fetch(`${API}/api/v1/missions/${mission.mission_id}/intervene`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ instruction: intervention }),
     });
-    if (!r.ok) setError(`Intervention rejected (${r.status})`);
-    setIntervention("");
-    refresh(mission.mission_id);
+    setIntervention(""); refresh(mission.mission_id);
+  };
+
+  const sendTeach = async () => {
+    if (!teach.trim()) return;
+    await fetch(`${API}/api/v1/memory/teach`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: teach }),
+    });
+    setTeach(""); refreshLearning();
+  };
+
+  const forgeNow = async () => {
+    await fetch(`${API}/api/v1/missions/${mission.mission_id}/forge`, { method: "POST" });
+    refreshLearning();
+  };
+
+  const replayNow = async () => {
+    const r = await fetch(`${API}/api/v1/missions/${mission.mission_id}/replay`, { method: "POST" });
+    if (r.ok) setMission(await r.json());
   };
 
   const h = mission?.health;
@@ -103,16 +124,22 @@ export default function Home() {
       </section>
 
       {mission && !TERMINAL.includes(mission.state) && (
-        <section className="mb-6 flex gap-2">
+        <section className="mb-4 flex gap-2">
           <input value={intervention} onChange={(e) => setIntervention(e.target.value)}
-            placeholder='Tell NEXORA what should change — e.g. "Stop all external communication." / "Add a tracker sheet."'
+            placeholder='Tell NEXORA what should change — e.g. "Stop all external communication."'
             className="flex-1 rounded border border-violet-800 bg-zinc-900 px-3 py-2 text-sm" />
           <button onClick={sendIntervention}
-            className="rounded bg-violet-600 px-4 py-2 text-sm font-semibold text-zinc-950">
-            Intervene
-          </button>
+            className="rounded bg-violet-600 px-4 py-2 text-sm font-semibold text-zinc-950">Intervene</button>
         </section>
       )}
+
+      <section className="mb-6 flex gap-2">
+        <input value={teach} onChange={(e) => setTeach(e.target.value)}
+          placeholder='Teach NEXORA a rule — e.g. "Always require my approval before scheduling meetings."'
+          className="flex-1 rounded border border-sky-800 bg-zinc-900 px-3 py-2 text-sm" />
+        <button onClick={sendTeach}
+          className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-zinc-950">Teach</button>
+      </section>
 
       {error && <p className="mb-4 text-red-400">Error: {error}</p>}
 
@@ -122,6 +149,12 @@ export default function Home() {
             <KV k="State" v={mission.state} highlight />
             <KV k="Mode" v={mission.execution_mode} />
             <KV k="Objective" v={mission.intent?.objective ?? "—"} />
+            {TERMINAL.includes(mission.state) && (
+              <div className="mt-3 flex gap-2">
+                <button onClick={forgeNow} className="rounded bg-amber-600 px-2 py-1 text-xs"> Forge workflow</button>
+                <button onClick={replayNow} className="rounded bg-zinc-700 px-2 py-1 text-xs">↺ Replay</button>
+              </div>
+            )}
           </Panel>
 
           <Panel title="PLAN (DAG) — click a node for WHY">
@@ -166,12 +199,49 @@ export default function Home() {
             <KV k="Firewall detections" v={String(firewallAlerts)} highlight={firewallAlerts > 0} />
             <KV k="Policy blocks" v={String(policyBlocks)} highlight={policyBlocks > 0} />
             <KV k="Audit events" v={String(auditTrail.length)} />
-            <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
-              {auditTrail.slice(0, 8).map((a) => (
+            <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+              {auditTrail.slice(0, 6).map((a) => (
                 <p key={a.entry_id} className={`text-xs ${
                   a.severity === "ALERT" ? "text-red-400" :
-                  a.severity === "WARN"  ? "text-amber-300" : "text-zinc-400"}`}>
+                  a.severity === "WARN" ? "text-amber-300" : "text-zinc-400"}`}>
                   [{a.kind}] {a.title} — {a.detail}
+                </p>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="EVIDENCE GRAPH — click a claim">
+            {mission.evidence.map((e: any) => (
+              <div key={e.evidence_id} className="mb-2 text-xs">
+                <button className="text-left text-zinc-200 underline decoration-zinc-600"
+                        onClick={() => setOpenEvidence(openEvidence === e.evidence_id ? null : e.evidence_id)}>
+                  “{e.claim}”
+                </button>
+                {openEvidence === e.evidence_id && (
+                  <div className="ml-3 mt-1 space-y-1 border-l border-zinc-700 pl-2">
+                    {e.sources.map((sid: string) => {
+                      const art = mission.artifacts.find((a: any) => a.artifact_id === sid);
+                      return <p key={sid} className="text-zinc-400">source: {art ? `${art.type} · ${art.uri}` : sid}</p>;
+                    })}
+                    <p className="text-zinc-500">derived via: {e.derivation_path.length} node(s) · confidence {e.confidence}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </Panel>
+
+          <Panel title="🧠 LEARNING — memory & forge">
+            <KV k="Memory entries" v={String(memoryList.length)} />
+            <KV k="Forged workflows" v={String(workflows.length)} />
+            <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+              {memoryList.slice(-6).map((m: any) => (
+                <p key={m.memory_id} className="text-xs text-zinc-400">
+                  [{m.type}/{m.scope}] {m.content}{m.effect ? ` → ${m.effect}:${m.capability}` : ""}
+                </p>
+              ))}
+              {workflows.slice(-3).map((w: any) => (
+                <p key={w.template_id} className="text-xs text-amber-300">
+                  ⚒ {w.name} · ${w.expected_cost_usd} · {w.expected_runtime_ms}ms
                 </p>
               ))}
             </div>
@@ -230,12 +300,6 @@ function WhyModal({ node, mission, audit, onClose }: {
         {fw && (
           <Section title="Content Firewall">
             <p className="text-sm text-zinc-200">Verdict: <b>{fw.verdict}</b></p>
-            {fw.per_message && fw.per_message.map((m: any, i: number) => (
-              <p key={i} className="mt-1 text-xs text-zinc-400">
-                {m.id}: {m.verdict}
-                {m.matches?.length > 0 && <span className="text-red-400"> — {m.matches.map((x: any) => x.category).join(", ")}</span>}
-              </p>
-            ))}
           </Section>
         )}
         <Section title="Evidence">
@@ -249,10 +313,6 @@ function WhyModal({ node, mission, audit, onClose }: {
           {audit.map((a) => (
             <p key={a.entry_id} className="mb-1 text-xs text-zinc-400">[{a.kind}] {a.title} — {a.detail}</p>
           ))}
-        </Section>
-        <Section title="Action receipt">
-          {receipt ? <pre className="overflow-x-auto text-xs text-zinc-300">{JSON.stringify(receipt, null, 2)}</pre>
-                   : <p className="text-sm text-zinc-500">Not executed yet.</p>}
         </Section>
       </div>
     </div>

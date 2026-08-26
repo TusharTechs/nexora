@@ -156,6 +156,42 @@ class AuditEntryModel(BaseModel):
     trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = Field(default_factory=utcnow)
 
+class MemoryScope(str, Enum):
+    USER = "USER"
+    TEAM = "TEAM"
+    ORG = "ORG"
+    MISSION = "MISSION"
+    WORKFLOW = "WORKFLOW"
+
+class MemoryType(str, Enum):
+    FACT = "FACT"
+    PREFERENCE = "PREFERENCE"
+    POLICY = "POLICY"
+    LEARNED_WORKFLOW = "LEARNED_WORKFLOW"
+    CORRECTION = "CORRECTION"
+
+class MemoryEntry(BaseModel):
+    memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    scope: MemoryScope = MemoryScope.ORG
+    type: MemoryType = MemoryType.FACT
+    content: str
+    capability: Optional[str] = None
+    effect: Optional[str] = None          # "forbid" | "require_approval" | "correction"
+    provenance: str = "taught"
+    confidence: float = 1.0
+    author: str = "user"
+    created_at: datetime = Field(default_factory=utcnow)
+
+class WorkflowTemplate(BaseModel):
+    template_id: str
+    name: str
+    source_mission_id: str
+    blueprint: List[Dict[str, Any]] = []
+    expected_cost_usd: float = 0.0
+    expected_runtime_ms: int = 0
+    trigger: str = "manual"
+    created_at: datetime = Field(default_factory=utcnow)
+
 class Mission(BaseModel):
     mission_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     goal: str
