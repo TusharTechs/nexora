@@ -58,9 +58,19 @@ class MissionIntent(BaseModel):
 class MissionConstitution(BaseModel):
     mission_id: str
     budget_usd: float = 1.0
+    deadline: Optional[datetime] = None
     forbidden_actions: List[str] = []
+    forbidden_domains: List[str] = []      # ADR-038
+    forbidden_entities: List[str] = []     # ADR-038
     allowed_capabilities: List[str] = []
     created_at: datetime = Field(default_factory=utcnow)
+
+class NodeCondition(BaseModel):
+    source_capability: str
+    path: str = "search_results"
+    op: Literal["min_count", "any_contains"]
+    field: Optional[str] = None
+    value: Any = None
 
 class MissionNode(BaseModel):
     node_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -68,9 +78,12 @@ class MissionNode(BaseModel):
     inputs: Dict[str, Any] = {}
     outputs: Dict[str, Any] = {}
     depends_on: List[str] = []
-    status: Literal["PENDING", "RUNNING", "SUCCESS", "FAILED", "WAITING_APPROVAL"] = "PENDING"
+    condition: Optional[NodeCondition] = None
+    status: Literal["PENDING", "RUNNING", "SUCCESS", "FAILED", "SKIPPED", "WAITING_APPROVAL"] = "PENDING"
     approved: bool = False
+    retries: int = 0
     rationale_summary: str = ""
+    firewall_summary: str = ""    # ADR-037 — safe scan summary
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
@@ -98,7 +111,7 @@ class ActionReceipt(BaseModel):
     mission_id: str
     node_id: str
     action: str
-    reason: str                      # safe rationale summary — NEVER raw CoT
+    reason: str
     agent_id: str
     capability_id: str
     policy_decision: Literal["ALLOW", "BLOCK", "REQUIRE_APPROVAL"]
@@ -120,7 +133,26 @@ class MissionHealth(BaseModel):
     mission_id: str
     completion_percentage: float = 0.0
     evidence_coverage: float = 0.0
-    current_execution_state: MissionState
+    policy_risk_score: float = 0.0
+    budget_consumed_usd: float = 0.0
+    budget_remaining_usd: float = 0.0
+    blocked_objectives: List[str] = []
+    failed_nodes: List[str] = []
+    retry_count: int = 0
+    current_execution_state: MissionState = MissionState.CREATED
+    replan_count: int = 0
+
+class AuditEntryModel(BaseModel):
+    entry_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    mission_id: str = ""
+    node_id: Optional[str] = None
+    kind: str = "NODE_EXECUTED"
+    severity: str = "INFO"
+    title: str = ""
+    detail: str = ""
+    metadata: Dict[str, Any] = {}
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = Field(default_factory=utcnow)
 
 class Mission(BaseModel):
     mission_id: str = Field(default_factory=lambda: str(uuid.uuid4()))

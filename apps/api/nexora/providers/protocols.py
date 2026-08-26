@@ -2,7 +2,14 @@ from typing import List, Dict, Optional, Protocol
 from packages.core.models import Artifact
 
 class WorkspaceProvider(Protocol):
-    """One object implements every Workspace protocol per execution mode."""
+    """One object implements every Workspace protocol per execution mode.
+
+    CONTRACT (Phase 4 hardening): search/read results MUST include the full
+    message/file body under the "body" key when available — the Content
+    Firewall scans it before any agent consumes the content.
+    Live Gmail implementation: fetch messages with format="full" (or parse
+    the payload from format="metadata"); never return snippet-only dicts.
+    """
     async def create_document(self, mission_id: str, node_id: str, title: str, content: str) -> Artifact: ...
     async def verify_artifact(self, artifact: Artifact) -> bool: ...
     async def search_emails(self, query: str, max_results: int) -> List[Dict]: ...

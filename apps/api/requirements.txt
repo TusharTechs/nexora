@@ -5,3 +5,4 @@ pytest
 httpx
 python-dotenv
 google-api-python-client
+google-cloud-firestore
