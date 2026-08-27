@@ -115,6 +115,13 @@ async def create_mission(req: GoalRequest):
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
         mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
 
+        # Phase 3: Context Discovery (ADR-055)
+        # Scans Drive/Gmail/Calendar for existing context related to the goal.
+        # Fails gracefully to empty bundle if discovery fails.
+        from nexora.core.context_discovery import ContextDiscoveryService
+        ctx_svc = ContextDiscoveryService(runtime.registry.provider)
+        mission.context_bundle = await ctx_svc.discover(req.goal, mission.outcome_contract)
+
         # LIVE requires a connected Google account (OAuth) before any work
         if mission.execution_mode == ExecutionMode.LIVE:
             creds = await LocalCredentialStore().get_google_credentials("default")
@@ -446,6 +453,14 @@ async def get_contract(mission_id: str):
         return mission.outcome_contract.model_dump(mode="json")
     return mission.outcome_contract
 
+@app.get("/api/v1/missions/{mission_id}/context")
+async def get_context(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    if mission.context_bundle is None:
+        raise HTTPException(status_code=404, detail="No context discovered")
+    if hasattr(mission.context_bundle, "model_dump"):
+        return mission.context_bundle.model_dump(mode="json")
+    return mission.context_bundle
 
 # ---------------- Capability Network ----------------
 

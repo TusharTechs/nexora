@@ -295,6 +295,32 @@ export default function Home() {
                   )}
                 </div>
               )}
+              {mission.context_bundle && mission.context_bundle.goal_entities?.length > 0 && (
+                <div className="rounded border border-violet-800 bg-violet-900/20 p-3 text-sm">
+                  <p className="mb-2 text-xs font-bold tracking-widest text-violet-400">CONTEXT DISCOVERED</p>
+                  <p className="mb-1 text-xs text-zinc-400">Entities: {mission.context_bundle.goal_entities?.join(", ")}</p>
+                  {mission.context_bundle.drive_items?.length > 0 && (
+                    <>
+                      <p className="mt-2 text-xs text-zinc-400">Drive ({mission.context_bundle.drive_items.length} items):</p>
+                      <ul className="ml-4 list-disc text-xs text-zinc-300">
+                        {mission.context_bundle.drive_items.slice(0, 3).map((item: any, i: number) => (
+                          <li key={i}>{item.title}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {mission.context_bundle.gmail_items?.length > 0 && (
+                    <>
+                      <p className="mt-2 text-xs text-zinc-400">Gmail ({mission.context_bundle.gmail_items.length} items):</p>
+                      <ul className="ml-4 list-disc text-xs text-zinc-300">
+                        {mission.context_bundle.gmail_items.slice(0, 3).map((item: any, i: number) => (
+                          <li key={i}>{item.title}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
               {mission.workspace_uri && (
                 <div className="rounded border border-emerald-700 bg-emerald-900/20 p-3 text-sm">
                   📁 <b>Everything is in one place:</b>{" "}

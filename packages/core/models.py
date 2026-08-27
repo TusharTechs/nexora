@@ -208,6 +208,7 @@ class Mission(BaseModel):
     execution_mode: ExecutionMode = ExecutionMode.MOCK
     outcome_contract: Optional[Any] = None
     semantic_verification: Optional[Any] = None
+    context_bundle: Optional[Any] = None
     workspace_folder_id: Optional[str] = None
     workspace_uri: Optional[str] = None
     replan_count: int = 0

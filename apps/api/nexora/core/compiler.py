@@ -19,7 +19,7 @@ KEYWORD_RULES: List[Tuple[Tuple[str, ...], str]] = [
     (("video",), "veo.generate_video"),
     (("audio", "briefing"), "lyria.generate_audio"),
 ]
-RESEARCH_CAPS = {"gmail.search", "drive.search", "multimodal.analyze", "sheets.read", "people.search"}
+RESEARCH_CAPS = {"gmail.search", "drive.search", "drive.read", "multimodal.analyze", "sheets.read", "people.search"}
 SYNTHESIS_CAPS = {"docs.create", "calendar.create_event", "gmail.send", "slides.create",
                   "chat.notify", "tasks.create", "forms.create",
                   "veo.generate_video", "lyria.generate_audio"}
@@ -29,7 +29,7 @@ class WorkflowCompiler:
         self.network = network
 
     async def compile(self, goal: str, intent: MissionIntent, constitution: MissionConstitution,
-                      attachment=None) -> List[MissionNode]:
+                      attachment=None, context_bundle=None) -> List[MissionNode]:
         text = goal.lower()
         selected: List[Tuple[str, str]] = []
         for terms, cap_id in KEYWORD_RULES:
@@ -59,6 +59,11 @@ class WorkflowCompiler:
         if attachment and "multimodal.analyze" not in [c for c, _ in selected]:
             selected.append(("multimodal.analyze", "attachment"))
 
+        # Phase 3: If context bundle contains Drive files, prefer reading them over generic docs.create
+        if context_bundle and hasattr(context_bundle, "drive_items") and context_bundle.drive_items:
+            if "drive.read" in constitution.allowed_capabilities and "drive.read" not in [c for c, _ in selected]:
+                selected.append(("drive.read", "context"))
+
         if not selected:
             selected.append(("docs.create", "fallback"))
 
@@ -72,6 +77,11 @@ class WorkflowCompiler:
             inputs = self._default_inputs(cap_id, intent, None)
             if cap_id == "multimodal.analyze" and attachment is not None:
                 inputs["attachment"] = attachment
+            if cap_id == "drive.read" and context_bundle and hasattr(context_bundle, "drive_items"):
+                # Read the first discovered file from context bundle
+                if context_bundle.drive_items:
+                    inputs["file_id"] = context_bundle.drive_items[0].resource_id
+                    inputs["title"] = context_bundle.drive_items[0].title
             n = MissionNode(
                 capability_id=cap_id,
                 inputs=inputs,
@@ -109,6 +119,8 @@ class WorkflowCompiler:
             return {"query": intent.objective, "max_results": 5}
         if cap_id == "drive.search":
             return {"query": intent.objective}
+        if cap_id == "drive.read":
+            return {"file_id": "", "title": ""}
         if cap_id == "sheets.create":
             return {"title": title or f"Tracker - {intent.objective}", "headers": ["Item", "Owner", "Status"]}
         if cap_id == "sheets.read":
