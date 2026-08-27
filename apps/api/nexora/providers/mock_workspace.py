@@ -124,6 +124,8 @@ class MockWorkspaceProvider:
     async def analyze_attachment(self, mission_id, node_id, attachment) -> Dict:
         await self._enter("multimodal.analyze")
         text = (attachment or {}).get("text", "")
+        if not text and (attachment or {}).get("type", "").startswith("image"):
+            text = "500 Internal Server Error\nDB_TIMEOUT"   # simulated vision in MOCK
         error_code = "DB_TIMEOUT" if "DB_TIMEOUT" in text else ("500" if "500" in text else "UNKNOWN")
         artifact = self._art("ANALYSIS", self._analysis, mission_id, node_id,
                              error_code=error_code, source=(attachment or {}).get("name", ""))
@@ -137,6 +139,14 @@ class MockWorkspaceProvider:
     async def generate_audio(self, mission_id, node_id, prompt) -> Artifact:
         await self._enter("lyria.generate_audio")
         return self._art("AUDIO", self._audios, mission_id, node_id, prompt=prompt)
+
+        # ---- Mission Workspace (ADR-050) ----
+    def bind(self, mission_id, folder_id):
+        pass   # mock artifacts are already mission-scoped
+
+    async def ensure_workspace(self, goal) -> dict:
+        fid = str(uuid.uuid4())
+        return {"folder_id": fid, "uri": f"mock://workspace/{fid}"}
 
     async def verify_artifact(self, artifact: Artifact) -> bool:
         store = {"DOC": self._docs, "SHEET": self._sheets, "EVENT": self._events, "EMAIL": self._sent,

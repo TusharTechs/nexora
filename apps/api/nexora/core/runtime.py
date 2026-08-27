@@ -243,6 +243,10 @@ class MissionRuntime:
             await self.supervisor.check_completion(mission_id)
             return
 
+        provider = self.registry.provider
+        if hasattr(provider, "bind"):
+            provider.bind(mission_id, mission.workspace_folder_id)
+
         node.status = "RUNNING"
         node.started_at = utcnow()
         await self.repo.save(mission)

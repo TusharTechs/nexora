@@ -28,7 +28,8 @@ class WorkflowCompiler:
     def __init__(self, network: CapabilityNetwork):
         self.network = network
 
-    async def compile(self, goal: str, intent: MissionIntent, constitution: MissionConstitution) -> List[MissionNode]:
+    async def compile(self, goal: str, intent: MissionIntent, constitution: MissionConstitution,
+                      attachment=None) -> List[MissionNode]:
         text = goal.lower()
         selected: List[Tuple[str, str]] = []
         for terms, cap_id in KEYWORD_RULES:
@@ -54,6 +55,10 @@ class WorkflowCompiler:
         if "multimodal.analyze" in [c for c, _ in selected] and "gmail.search" not in [c for c, _ in selected]:
             selected.append(("gmail.search", "screenshot"))
 
+        # An uploaded attachment forces multimodal analysis even without keywords
+        if attachment and "multimodal.analyze" not in [c for c, _ in selected]:
+            selected.append(("multimodal.analyze", "attachment"))
+
         if not selected:
             selected.append(("docs.create", "fallback"))
 
@@ -64,9 +69,12 @@ class WorkflowCompiler:
         by_cap = {}
         for cap_id, term in selected:
             cap = self.network.get(cap_id)
+            inputs = self._default_inputs(cap_id, intent, None)
+            if cap_id == "multimodal.analyze" and attachment is not None:
+                inputs["attachment"] = attachment
             n = MissionNode(
                 capability_id=cap_id,
-                inputs=self._default_inputs(cap_id, intent, None),
+                inputs=inputs,
                 rationale_summary=f"Matched term '{term}' → capability {cap_id} ({cap.name}).",
             )
             by_cap.setdefault(cap_id, n)

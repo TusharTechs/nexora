@@ -206,5 +206,8 @@ class Mission(BaseModel):
     verification: Optional[VerificationResult] = None
     health: Optional[MissionHealth] = None
     execution_mode: ExecutionMode = ExecutionMode.MOCK
+    outcome_contract: Optional[Any] = None
+    workspace_folder_id: Optional[str] = None
+    workspace_uri: Optional[str] = None
     replan_count: int = 0
     created_at: datetime = Field(default_factory=utcnow)

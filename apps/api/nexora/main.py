@@ -1,14 +1,24 @@
 import os
+from typing import Optional
+from urllib.parse import urlencode
+
+from dotenv import load_dotenv
+load_dotenv()  # populate os.environ from apps/api/.env before anything reads it
+
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
+
 from packages.core.models import (Mission, MissionState, ExecutionMode, MissionIntent,
                                   MissionNode, MemoryEntry, MemoryType, MemoryScope)
 from nexora.core.repository import build_repository
 from nexora.core.state_machine import MissionStateMachine, InvalidStateTransitionError
-from nexora.core.capability_network import CapabilityNetwork
+from nexora.core.capability_network import     CapabilityNetwork
 from nexora.core.constitution_builder import ConstitutionBuilder
 from nexora.core.compiler import WorkflowCompiler
+from nexora.core.llm_compiler import LLMWorkflowCompiler
 from nexora.core.event_bus import LocalEventBus
 from nexora.core.runtime import MissionRuntime
 from nexora.core.security import ContentFirewall
@@ -20,9 +30,9 @@ from nexora.core.model_router import ModelRouter
 from nexora.agents.interpreter import MissionInterpreter
 from nexora.agents.critic import PlanCritic
 from nexora.providers.mock_workspace import MockWorkspaceProvider
+from nexora.providers.acme_labs import AcmeLabsProvider
 from nexora.providers.replay_provider import ReplayProvider
 from nexora.providers.protocols import ProviderRegistry
-from nexora.providers.acme_labs import AcmeLabsProvider
 from nexora.benchmarks import BENCHMARKS, evaluate_mission
 
 app = FastAPI(title="NEXORA API")
@@ -42,12 +52,13 @@ def build_registry(mode: ExecutionMode) -> ProviderRegistry:
     if mode == ExecutionMode.LIVE:
         from nexora.providers.live_workspace import LiveWorkspaceProvider
         return ProviderRegistry(LiveWorkspaceProvider(LocalCredentialStore()))
-    return ProviderRegistry(MockWorkspaceProvider())
     if mode == ExecutionMode.ACME_LABS:
         return ProviderRegistry(AcmeLabsProvider())
+    return ProviderRegistry(MockWorkspaceProvider())
 
 registry = build_registry(ExecutionMode(os.getenv("EXECUTION_MODE", "MOCK")))
 runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
+llm_compiler = LLMWorkflowCompiler(network, router)
 
 
 # ---------------- Request models ----------------
@@ -55,6 +66,7 @@ runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
 class GoalRequest(BaseModel):
     goal: str
     execution_mode: ExecutionMode = ExecutionMode.MOCK
+    attachment: Optional[dict] = None
 
 class NodeRef(BaseModel):
     mission_id: str
@@ -93,9 +105,34 @@ async def create_mission(req: GoalRequest):
         mission.state = MissionStateMachine.transition(mission.state, MissionState.INTERPRETING)
         mission.intent = await MissionInterpreter(router).interpret(req.goal)
 
+        # Phase 1: Outcome Contract generation (ADR-053)
+        # Generated before planning so the contract can drive planning + verification.
+        # Fails gracefully to a minimal contract if the LLM is unavailable or returns bad output.
+        from nexora.core.contract import ContractGenerator
+        contract_gen = ContractGenerator()
+        mission.outcome_contract = await contract_gen.generate(req.goal, mission.intent)
+
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
         mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
-        mission.nodes = await WorkflowCompiler(network).compile(mission.goal, mission.intent, mission.constitution)
+
+        # LIVE requires a connected Google account (OAuth) before any work
+        if mission.execution_mode == ExecutionMode.LIVE:
+            creds = await LocalCredentialStore().get_google_credentials("default")
+            if not creds:
+                raise HTTPException(status_code=409,
+                                    detail="Google not connected. Open /api/v1/auth/google first.")
+
+        # Mission Workspace (ADR-050): one folder, everything filed inside
+        ws = await runtime.registry.provider.ensure_workspace(req.goal)
+        mission.workspace_folder_id = ws["folder_id"]
+        mission.workspace_uri = ws["uri"]
+
+        # LLM compiler (ADR-051) with deterministic keyword fallback (ADR-031)
+        mission.nodes = await llm_compiler.compile(mission.goal, mission.intent,
+                                                   mission.constitution, attachment=req.attachment)
+        if not mission.nodes:
+            mission.nodes = await WorkflowCompiler(network).compile(mission.goal, mission.intent,
+                                                                    mission.constitution, attachment=req.attachment)
 
         mission.state = MissionStateMachine.transition(mission.state, MissionState.CRITICIZING)
         critique = await PlanCritic(network).critique(mission.nodes, mission.constitution)
@@ -121,9 +158,16 @@ async def create_mission(req: GoalRequest):
 
 @app.post("/internal/execute_node")
 async def execute_node_internal(ref: NodeRef):
-    """Cloud Tasks worker target (also used by LocalTaskDispatcher)."""
     await runtime.process_node(ref.mission_id, ref.node_id)
     return {"status": "dispatched"}
+
+
+@app.post("/internal/reset")
+async def reset_all_state():
+    if hasattr(repo, "clear"): repo.clear()
+    audit.clear(); memory.clear(); bus.clear(); forge.clear()
+    if hasattr(registry.provider, "reset_seed"): registry.provider.reset_seed()
+    return {"status": "reset"}
 
 
 @app.post("/api/v1/missions/{mission_id}/approvals/{node_id}")
@@ -260,6 +304,88 @@ async def replay_mission(mission_id: str):
     return replay_m.model_dump(mode="json")
 
 
+# ---------------- Benchmarks (Phase 8) ----------------
+
+@app.get("/api/v1/benchmarks")
+async def list_benchmarks():
+    return [{"name": b.name, "goal": b.goal, "expected_artifacts": b.expected_artifacts,
+             "expected_nodes": b.expected_nodes, "min_evidence": b.min_evidence}
+            for b in BENCHMARKS]
+
+@app.post("/api/v1/benchmarks/{benchmark_name}/run")
+async def run_benchmark(benchmark_name: str):
+    bm = next((b for b in BENCHMARKS if b.name == benchmark_name), None)
+    if bm is None:
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+    old_provider = runtime.registry.provider
+    runtime.registry.provider = AcmeLabsProvider()
+    try:
+        return await create_mission(GoalRequest(goal=bm.goal, execution_mode=ExecutionMode.ACME_LABS))
+    finally:
+        runtime.registry.provider = old_provider
+
+@app.get("/api/v1/missions/{mission_id}/benchmark")
+async def get_benchmark_result(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    bm = next((b for b in BENCHMARKS if b.goal == mission.goal), None)
+    if bm is None:
+        raise HTTPException(status_code=404, detail="Mission is not a benchmark")
+    return evaluate_mission(mission, bm)
+
+
+# ---------------- Google OAuth (Phase 9.3) ----------------
+
+REDIRECT_URI = "http://localhost:8000/api/v1/auth/callback"
+GOOGLE_SCOPES = [
+    "openid", "email", "profile",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
+
+@app.get("/api/v1/auth/google")
+async def auth_google():
+    cid = os.getenv("GOOGLE_CLIENT_ID", "")
+    if not cid:
+        raise HTTPException(status_code=409,
+                            detail="Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET in apps/api/.env")
+    q = urlencode({"client_id": cid, "redirect_uri": REDIRECT_URI, "response_type": "code",
+                   "scope": " ".join(GOOGLE_SCOPES), "access_type": "offline", "prompt": "consent"})
+    return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{q}")
+
+@app.get("/api/v1/auth/callback", response_class=HTMLResponse)
+async def auth_callback(code: str, state: str = ""):
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    insecure = os.getenv("NEXORA_INSECURE_TLS", "") == "1"
+
+    async with httpx.AsyncClient(verify=not insecure) as c:
+        r = await c.post("https://oauth2.googleapis.com/token", data={
+            "code": code, "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code"})
+
+    if r.status_code != 200:
+        return HTMLResponse(f"<h2>❌ Token exchange failed</h2><pre>{r.text}</pre>", status_code=400)
+
+    token_data = r.json()
+    # Bake client ID/Secret into the stored creds so refresh doesn't depend on env vars
+    token_data["client_id"] = client_id
+    token_data["client_secret"] = client_secret
+
+    await LocalCredentialStore().store_google_credentials("default", token_data)
+    return HTMLResponse("<h2>✅ Google connected</h2><p>You can close this tab and launch a LIVE mission.</p>")
+
+@app.get("/api/v1/auth/status")
+async def auth_status():
+    creds = await LocalCredentialStore().get_google_credentials("default")
+    return {"connected": bool(creds)}
+
+
 # ---------------- Read endpoints ----------------
 
 @app.get("/api/v1/missions/{mission_id}", response_model=Mission)
@@ -301,6 +427,16 @@ async def get_verification(mission_id: str):
 async def get_constitution(mission_id: str):
     return (await _get_or_404(mission_id)).constitution
 
+@app.get("/api/v1/missions/{mission_id}/contract")
+async def get_contract(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    if mission.outcome_contract is None:
+        raise HTTPException(status_code=404, detail="No contract generated")
+    # Handle both OutcomeContract instance and plain dict
+    if hasattr(mission.outcome_contract, "model_dump"):
+        return mission.outcome_contract.model_dump(mode="json")
+    return mission.outcome_contract
+
 
 # ---------------- Capability Network ----------------
 
@@ -311,42 +447,6 @@ async def list_capabilities():
 @app.get("/api/v1/capabilities/{capability_id}")
 async def get_capability(capability_id: str):
     cap = network.get(capability_id)
-
-@app.post("/internal/reset")
-async def reset_all_state():
-    """Test-only: clears every in-memory singleton. Never exposed in production."""
-    repo.clear() if hasattr(repo, "clear") else None
-    audit.clear()
-    memory.clear()
-    bus.clear()
-    forge.clear()
-    if hasattr(registry, "provider") and hasattr(registry.provider, "reset_seed"):
-        registry.provider.reset_seed()
-    return {"status": "reset"}
-
-@app.get("/api/v1/benchmarks")
-async def list_benchmarks():
-    return [{"name": b.name, "goal": b.goal, "expected_artifacts": b.expected_artifacts,
-             "expected_nodes": b.expected_nodes, "min_evidence": b.min_evidence}
-            for b in BENCHMARKS]
-
-@app.post("/api/v1/benchmarks/{benchmark_name}/run")
-async def run_benchmark(benchmark_name: str):
-    bm = next((b for b in BENCHMARKS if b.name == benchmark_name), None)
-    if bm is None:
-        raise HTTPException(status_code=404, detail="Benchmark not found")
-    old_registry = registry
-    runtime.registry = ProviderRegistry(AcmeLabsProvider())
-    try:
-        r = await create_mission(GoalRequest(goal=bm.goal, execution_mode=ExecutionMode.ACME_LABS))
-        return r.model_dump(mode="json")
-    finally:
-        runtime.registry = old_registry
-
-@app.get("/api/v1/missions/{mission_id}/benchmark")
-async def get_benchmark_result(mission_id: str):
-    mission = await _get_or_404(mission_id)
-    bm = next((b for b in BENCHMARKS if b.goal == mission.goal), None)
-    if bm is None:
-        raise HTTPException(status_code=404, detail="Mission is not a benchmark")
-    return evaluate_mission(mission, bm)
+    if cap is None:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    return cap.model_dump(mode="json")
