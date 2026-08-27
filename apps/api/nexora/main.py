@@ -451,6 +451,26 @@ async def get_context(mission_id: str):
 async def get_constitution(mission_id: str):
     return (await _get_or_404(mission_id)).constitution
 
+@app.post("/api/v1/missions/{mission_id}/replan")
+async def trigger_adaptive_replan(mission_id: str):
+    """Manually trigger adaptive replanning (for demo/testing)."""
+    mission = await _get_or_404(mission_id)
+    if mission.state not in (MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS):
+        raise HTTPException(status_code=409,
+                            detail="Adaptive replan only works on terminal missions")
+    if not mission.semantic_verification:
+        raise HTTPException(status_code=409, detail="No semantic verification yet")
+    if mission.semantic_verification.complete:
+        return {"status": "already_complete", "replan_triggered": False}
+    if mission.replan_count >= 2:
+        return {"status": "max_replans_reached", "replan_triggered": False}
+    # Re-open the mission for execution
+    mission.state = MissionState.EXECUTING
+    mission.adaptive_replan_pending = False  # allow supervisor to re-trigger
+    await repo.save(mission)
+    await runtime.supervisor.check_completion(mission_id)
+    return {"status": "replan_triggered", "replan_count": mission.replan_count}
+
 
 # ---------------- Capability Network ----------------
 

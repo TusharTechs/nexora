@@ -2,8 +2,10 @@ from packages.core.models import MissionState, utcnow
 from nexora.core.state_machine import MissionStateMachine
 from nexora.core.health import HealthCalculator
 from nexora.core.evidence import EvidenceGraph
-from nexora.core.audit import AuditTrail
+from nexora.core.audit import AuditTrail, AuditEntry, AuditKind
+from nexora.core.policy_engine import PolicyEngine
 from nexora.agents.verifier import VerificationAgent
+from nexora.agents.critic import PlanCritic
 
 TERMINAL = {"SUCCESS", "FAILED", "SKIPPED"}
 
@@ -55,7 +57,7 @@ class MissionSupervisor:
                 mission.evidence.append(eg.generate_evidence(
                     mission_id, f"{art.type} artifact created and verified.", art, node.node_id if node else "-"))
 
-            # Phase 2: Semantic verification (contract-aware) — runs after structural
+            # Phase 2: Semantic verification (contract-aware) — ADVISORY
             if mission.outcome_contract is not None and mission.verification.overall_status == "PASS":
                 from nexora.core.semantic_verifier import SemanticVerifier
                 sv = SemanticVerifier()
@@ -63,24 +65,65 @@ class MissionSupervisor:
                     mission.outcome_contract, mission.artifacts,
                     mission.evidence, mission.receipts)
 
+                # Phase 5: Adaptive replan if outcome incomplete
+                if (mission.semantic_verification
+                        and not mission.semantic_verification.complete
+                        and mission.replan_count < 2
+                        and not mission.adaptive_replan_pending):
+                    from nexora.core.adaptive_replanner import AdaptiveReplanner
+                    ar = AdaptiveReplanner(self.network, PolicyEngine(self.network), PlanCritic(self.network))
+                    follow_up = await ar.propose(mission, mission.semantic_verification)
+                    if follow_up:
+                        mission.replan_count += 1
+                        mission.adaptive_replan_pending = True
+                        for n in follow_up:
+                            mission.nodes.append(n)
+                        self.audit.record(AuditEntry(
+                            mission_id=mission_id,
+                            kind=AuditKind.REPLAN, severity="WARN",
+                            title="adaptive_replan",
+                            detail=f"Semantic verification incomplete; "
+                                   f"{len(follow_up)} follow-up nodes added (cycle {mission.replan_count}).",
+                        ))
+                        # Dispatch new root nodes
+                        for n in follow_up:
+                            if not n.depends_on:
+                                await self.bus.publish("MISSION.NODE.ADDED",
+                                                       {"mission_id": mission_id, "node_id": n.node_id})
+                        await self.repo.save(mission)
+                        # Reset terminal state to re-execute
+                        mission.state = MissionStateMachine.transition(mission.state, MissionState.EXECUTING)
+                        for n in follow_up:
+                            if not n.depends_on:
+                                # Use runtime reference to dispatch new nodes
+                                if hasattr(self, 'runtime'):
+                                    await self.runtime.dispatch(mission_id, n.node_id)
+                        # Re-enter execution via dispatch — use the bus to signal
+                        await self.bus.publish("MISSION.REPLAN.TRIGGERED",
+                                               {"mission_id": mission_id,
+                                                "cycle": mission.replan_count,
+                                                "new_nodes": [n.node_id for n in follow_up]})
+                        return  # let the dispatch system pick up the new nodes
+                    mission.adaptive_replan_pending = False
+            
             # Determine final state
             structural_pass = mission.verification.overall_status == "PASS"
             semantic_pass = (mission.semantic_verification is None
                              or getattr(mission.semantic_verification, "complete", True))
             all_pass = structural_pass and semantic_pass
-
+            
             if all_pass:
                 final = MissionState.COMPLETED
             elif mission.artifacts:
                 final = MissionState.PARTIAL_SUCCESS
             else:
                 final = MissionState.FAILED
-
+            
             mission.state = MissionStateMachine.transition(mission.state, final)
             mission.health = self.health.calculate(mission)
             await self.bus.publish("MISSION.COMPLETED" if all_pass else "MISSION.FAILED",
                                    {"mission_id": mission_id, "status": final.value})
         else:
             mission.health = self.health.calculate(mission)
-
+        
         await self.repo.save(mission)

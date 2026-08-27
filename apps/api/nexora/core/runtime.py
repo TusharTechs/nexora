@@ -27,6 +27,8 @@ class MissionRuntime:
         self.memory = memory
         self.executor = NodeExecutor(PolicyEngine(network, memory), network, registry, firewall, audit)
         self.supervisor = MissionSupervisor(repo, bus, registry, network, audit)
+        # Phase 5: Give supervisor a reference back to runtime for dispatching replan nodes
+        self.supervisor.runtime = self
         self.replanner = Replanner(network)
         self.critic = PlanCritic(network)
         if os.getenv("NEXORA_DISPATCHER") == "cloud":
