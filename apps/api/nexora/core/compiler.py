@@ -19,7 +19,8 @@ KEYWORD_RULES: List[Tuple[Tuple[str, ...], str]] = [
     (("video",), "veo.generate_video"),
     (("audio", "briefing"), "lyria.generate_audio"),
 ]
-RESEARCH_CAPS = {"gmail.search", "drive.search", "drive.read", "multimodal.analyze", "sheets.read", "people.search"}
+RESEARCH_CAPS = {"gmail.search", "drive.search", "drive.read", "multimodal.analyze",
+                 "sheets.read", "people.search", "web.research"}
 SYNTHESIS_CAPS = {"docs.create", "calendar.create_event", "gmail.send", "slides.create",
                   "chat.notify", "tasks.create", "forms.create",
                   "veo.generate_video", "lyria.generate_audio"}
@@ -29,7 +30,7 @@ class WorkflowCompiler:
         self.network = network
 
     async def compile(self, goal: str, intent: MissionIntent, constitution: MissionConstitution,
-                      attachment=None, context_bundle=None) -> List[MissionNode]:
+                      attachment=None, context_bundle=None, outcome_contract=None) -> List[MissionNode]:
         text = goal.lower()
         selected: List[Tuple[str, str]] = []
         for terms, cap_id in KEYWORD_RULES:
@@ -64,6 +65,12 @@ class WorkflowCompiler:
             if "drive.read" in constitution.allowed_capabilities and "drive.read" not in [c for c, _ in selected]:
                 selected.append(("drive.read", "context"))
 
+        # Phase 4: If the Outcome Contract requires external research, add web.research.
+        # Controlled trigger — only fires when the contract explicitly needs it.
+        if outcome_contract and getattr(outcome_contract, "needs_external_research", False):
+            if "web.research" in constitution.allowed_capabilities and "web.research" not in [c for c, _ in selected]:
+                selected.append(("web.research", "contract"))
+
         if not selected:
             selected.append(("docs.create", "fallback"))
 
@@ -82,6 +89,9 @@ class WorkflowCompiler:
                 if context_bundle.drive_items:
                     inputs["file_id"] = context_bundle.drive_items[0].resource_id
                     inputs["title"] = context_bundle.drive_items[0].title
+            if cap_id == "web.research":
+                inputs["objective"] = goal
+                inputs["max_results"] = 5
             n = MissionNode(
                 capability_id=cap_id,
                 inputs=inputs,
@@ -142,6 +152,8 @@ class WorkflowCompiler:
         if cap_id == "multimodal.analyze":
             return {"attachment": {"type": "image/png", "name": "error.png",
                                    "text": "500 Internal Server Error\nDB_TIMEOUT"}}
+        if cap_id == "web.research":
+            return {"objective": intent.objective, "max_results": 5}
         if cap_id == "veo.generate_video":
             return {"prompt": f"Launch video for {intent.objective}"}
         if cap_id == "lyria.generate_audio":

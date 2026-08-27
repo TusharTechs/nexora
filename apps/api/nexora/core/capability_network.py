@@ -41,6 +41,9 @@ class CapabilityNetwork:
         self._add("multimodal.analyze", "Analyze Screenshot", "gemini", RiskLevel.LOW, ApprovalRequirement.NONE, 0.002, 1200, False, "Gemini multimodal extraction from an image.")
         self._add("veo.generate_video", "Generate Video", "veo", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.05, 8000, True, "Veo launch video.")
         self._add("lyria.generate_audio", "Generate Audio", "lyria", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.02, 5000, True, "Lyria audio briefing.")
+        self._add("web.research", "Web Research", "web", RiskLevel.LOW,
+                  ApprovalRequirement.NONE, 0.001, 2000, False,
+                  "Search the web for external evidence (market data, competitors, facts).")
 
     def register(self, capability: Capability):
         self._capabilities[capability.capability_id] = capability

@@ -105,22 +105,8 @@ async def create_mission(req: GoalRequest):
         mission.state = MissionStateMachine.transition(mission.state, MissionState.INTERPRETING)
         mission.intent = await MissionInterpreter(router).interpret(req.goal)
 
-        # Phase 1: Outcome Contract generation (ADR-053)
-        # Generated before planning so the contract can drive planning + verification.
-        # Fails gracefully to a minimal contract if the LLM is unavailable or returns bad output.
-        from nexora.core.contract import ContractGenerator
-        contract_gen = ContractGenerator()
-        mission.outcome_contract = await contract_gen.generate(req.goal, mission.intent)
-
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
         mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
-
-        # Phase 3: Context Discovery (ADR-055)
-        # Scans Drive/Gmail/Calendar for existing context related to the goal.
-        # Fails gracefully to empty bundle if discovery fails.
-        from nexora.core.context_discovery import ContextDiscoveryService
-        ctx_svc = ContextDiscoveryService(runtime.registry.provider)
-        mission.context_bundle = await ctx_svc.discover(req.goal, mission.outcome_contract)
 
         # LIVE requires a connected Google account (OAuth) before any work
         if mission.execution_mode == ExecutionMode.LIVE:
@@ -369,21 +355,21 @@ async def auth_callback(code: str, state: str = ""):
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
     insecure = os.getenv("NEXORA_INSECURE_TLS", "") == "1"
-
+    
     async with httpx.AsyncClient(verify=not insecure) as c:
         r = await c.post("https://oauth2.googleapis.com/token", data={
             "code": code, "client_id": client_id,
             "client_secret": client_secret,
             "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code"})
-
+            
     if r.status_code != 200:
         return HTMLResponse(f"<h2>❌ Token exchange failed</h2><pre>{r.text}</pre>", status_code=400)
-
+        
     token_data = r.json()
     # Bake client ID/Secret into the stored creds so refresh doesn't depend on env vars
     token_data["client_id"] = client_id
     token_data["client_secret"] = client_secret
-
+    
     await LocalCredentialStore().store_google_credentials("default", token_data)
     return HTMLResponse("<h2>✅ Google connected</h2><p>You can close this tab and launch a LIVE mission.</p>")
 
@@ -430,6 +416,18 @@ async def get_receipts(mission_id: str):
 async def get_verification(mission_id: str):
     return (await _get_or_404(mission_id)).verification
 
+# ---------------- Phase 1-4 Inspection Endpoints ----------------
+
+@app.get("/api/v1/missions/{mission_id}/contract")
+async def get_contract(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    if mission.outcome_contract is None:
+        raise HTTPException(status_code=404, detail="No contract generated")
+    if hasattr(mission.outcome_contract, "model_dump"):
+        return mission.outcome_contract.model_dump(mode="json")
+    return mission.outcome_contract
+
+
 @app.get("/api/v1/missions/{mission_id}/verification/semantic")
 async def get_semantic_verification(mission_id: str):
     mission = await _get_or_404(mission_id)
@@ -439,19 +437,6 @@ async def get_semantic_verification(mission_id: str):
         return mission.semantic_verification.model_dump(mode="json")
     return mission.semantic_verification
 
-@app.get("/api/v1/missions/{mission_id}/constitution")
-async def get_constitution(mission_id: str):
-    return (await _get_or_404(mission_id)).constitution
-
-@app.get("/api/v1/missions/{mission_id}/contract")
-async def get_contract(mission_id: str):
-    mission = await _get_or_404(mission_id)
-    if mission.outcome_contract is None:
-        raise HTTPException(status_code=404, detail="No contract generated")
-    # Handle both OutcomeContract instance and plain dict
-    if hasattr(mission.outcome_contract, "model_dump"):
-        return mission.outcome_contract.model_dump(mode="json")
-    return mission.outcome_contract
 
 @app.get("/api/v1/missions/{mission_id}/context")
 async def get_context(mission_id: str):
@@ -461,6 +446,11 @@ async def get_context(mission_id: str):
     if hasattr(mission.context_bundle, "model_dump"):
         return mission.context_bundle.model_dump(mode="json")
     return mission.context_bundle
+
+@app.get("/api/v1/missions/{mission_id}/constitution")
+async def get_constitution(mission_id: str):
+    return (await _get_or_404(mission_id)).constitution
+
 
 # ---------------- Capability Network ----------------
 

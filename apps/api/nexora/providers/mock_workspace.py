@@ -154,3 +154,11 @@ class MockWorkspaceProvider:
                  "VIDEO": self._videos, "AUDIO": self._audios, "FORM": self._forms,
                  "ANALYSIS": self._analysis}
         return artifact.resource_id in store.get(artifact.type, {})
+
+    async def web_research(self, objective: str, max_results: int = 5) -> Dict:
+        """Mock web research — delegates to WebResearchService for deterministic results."""
+        await self._enter("web.research")
+        from nexora.core.web_research import WebResearchService
+        svc = WebResearchService()
+        result = await svc.research(objective, max_results)
+        return result.model_dump(mode="json")

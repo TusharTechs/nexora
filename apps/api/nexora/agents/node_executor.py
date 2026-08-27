@@ -1,5 +1,5 @@
 import uuid
-from packages.core.models import MissionNode, MissionConstitution, ExecutionMode, ActionReceipt
+from packages.core.models import MissionNode, MissionConstitution, ExecutionMode, ActionReceipt, Artifact
 from nexora.core.policy_engine import PolicyEngine
 from nexora.core.capability_network import CapabilityNetwork
 from nexora.core.security import ContentFirewall
@@ -111,6 +111,22 @@ class NodeExecutor:
             artifact = await provider.generate_video(mission_id, node.node_id, node.inputs.get("prompt", ""))
         elif node.capability_id == "lyria.generate_audio":
             artifact = await provider.generate_audio(mission_id, node.node_id, node.inputs.get("prompt", ""))
+        elif node.capability_id == "web.research":
+            result_dict = await provider.web_research(
+                node.inputs.get("objective", node.inputs.get("query", "")),
+                node.inputs.get("max_results", 5))
+            node.outputs["research"] = result_dict
+            # Create a RESEARCH artifact
+            artifact = Artifact(
+                artifact_id=str(uuid.uuid4()),
+                mission_id=mission_id,
+                node_id=node.node_id,
+                type="RESEARCH",
+                provider="web",
+                resource_id=f"research_{node.node_id}",
+                uri=f"research://findings/{node.node_id}",
+            )
+            node.rationale_summary += f" [found {result_dict.get('sources_cited', 0)} cited findings]"
         else:
             raise ValueError(f"No executor route for {node.capability_id}")
 

@@ -192,3 +192,11 @@ class LiveWorkspaceProvider:
 
     async def verify_artifact(self, artifact: Artifact) -> bool:
         return artifact.provider == "google" and bool(artifact.resource_id)
+
+    async def web_research(self, objective: str, max_results: int = 5) -> Dict:
+        """Live web research via Tavily API. Falls back to mock if no key."""
+        await self._credentials()  # ensures OAuth is still valid (least privilege)
+        from nexora.core.web_research import WebResearchService
+        svc = WebResearchService()
+        result = await svc.research(objective, max_results)
+        return result.model_dump(mode="json")
