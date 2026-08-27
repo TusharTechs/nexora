@@ -237,6 +237,44 @@ export default function Home() {
 
           {tab === "overview" && (
             <div className="space-y-6">
+                            {mission.semantic_verification && (
+                <div className={`rounded border p-3 text-sm ${
+                  mission.semantic_verification.complete
+                    ? "border-emerald-700 bg-emerald-900/20"
+                    : "border-amber-700 bg-amber-900/20"
+                }`}>
+                  <p className="mb-2 text-xs font-bold tracking-widest text-zinc-400">SEMANTIC VERIFICATION</p>
+                  <p className="mb-2 text-sm">
+                    {mission.semantic_verification.complete ? (
+                      <span className="text-emerald-400">✓ All deliverables satisfied</span>
+                    ) : (
+                      <span className="text-amber-400">⚠ Outcome incomplete: {mission.semantic_verification.rationale}</span>
+                    )}
+                  </p>
+                  <ul className="ml-4 list-disc text-xs space-y-1">
+                    {mission.semantic_verification.deliverables?.map((d: any, i: number) => (
+                      <li key={i} className={
+                        d.status === "SATISFIED" ? "text-emerald-300"
+                        : d.status === "PARTIAL" ? "text-amber-300"
+                        : "text-red-400"
+                      }>
+                        <span className="font-bold">[{d.status}]</span> {d.name}
+                        {d.reason && <span className="text-zinc-400"> — {d.reason}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  {mission.semantic_verification.recommended_next_actions?.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-bold text-zinc-400">RECOMMENDED NEXT ACTIONS</p>
+                      <ul className="ml-4 list-disc text-xs text-zinc-300">
+                        {mission.semantic_verification.recommended_next_actions.map((a: string, i: number) => (
+                          <li key={i}>{a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
               <HealthGauges health={h} budget={budget} />
               {mission.outcome_contract && (
                 <div className="rounded border border-sky-800 bg-sky-900/20 p-3 text-sm">

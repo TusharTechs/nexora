@@ -423,6 +423,15 @@ async def get_receipts(mission_id: str):
 async def get_verification(mission_id: str):
     return (await _get_or_404(mission_id)).verification
 
+@app.get("/api/v1/missions/{mission_id}/verification/semantic")
+async def get_semantic_verification(mission_id: str):
+    mission = await _get_or_404(mission_id)
+    if mission.semantic_verification is None:
+        raise HTTPException(status_code=404, detail="No semantic verification yet")
+    if hasattr(mission.semantic_verification, "model_dump"):
+        return mission.semantic_verification.model_dump(mode="json")
+    return mission.semantic_verification
+
 @app.get("/api/v1/missions/{mission_id}/constitution")
 async def get_constitution(mission_id: str):
     return (await _get_or_404(mission_id)).constitution
