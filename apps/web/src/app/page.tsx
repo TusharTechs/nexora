@@ -142,6 +142,11 @@ export default function Home() {
     { id: "security", label: "Security" }, { id: "learning", label: "Learning" },
   ];
 
+  // Phase 6: Extract unique personas from mission nodes
+  const uniquePersonas: string[] = mission?.nodes
+    ? (Array.from(new Set(mission.nodes.map((n: any) => n.persona).filter(Boolean))) as string[])
+    : [];
+
   return (
     <main className="min-h-screen bg-zinc-950 p-6 font-mono text-zinc-100 lg:p-10">
       <header className="mb-6 flex items-baseline justify-between">
@@ -237,7 +242,7 @@ export default function Home() {
 
           {tab === "overview" && (
             <div className="space-y-6">
-                            {mission.semantic_verification && (
+              {mission.semantic_verification && (
                 <div className={`rounded border p-3 text-sm ${
                   mission.semantic_verification.complete
                     ? "border-emerald-700 bg-emerald-900/20"
@@ -275,7 +280,9 @@ export default function Home() {
                   )}
                 </div>
               )}
+              
               <HealthGauges health={h} budget={budget} />
+              
               {mission.outcome_contract && (
                 <div className="rounded border border-sky-800 bg-sky-900/20 p-3 text-sm">
                   <p className="mb-2 text-xs font-bold tracking-widest text-sky-400">OUTCOME CONTRACT</p>
@@ -295,6 +302,21 @@ export default function Home() {
                   )}
                 </div>
               )}
+              
+              {/* Phase 6: Workforce Panel - show assigned personas */}
+              {uniquePersonas.length > 0 && (
+                <div className="rounded border border-violet-800 bg-violet-900/20 p-3 text-sm">
+                  <p className="mb-2 text-xs font-bold tracking-widest text-violet-400">WORKFORCE ({uniquePersonas.length} SPECIALISTS)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {uniquePersonas.map((persona: string, i: number) => (
+                      <span key={i} className="rounded bg-violet-800 px-2 py-1 text-xs text-violet-200">
+                        {persona}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               {mission.context_bundle && mission.context_bundle.goal_entities?.length > 0 && (
                 <div className="rounded border border-violet-800 bg-violet-900/20 p-3 text-sm">
                   <p className="mb-2 text-xs font-bold tracking-widest text-violet-400">CONTEXT DISCOVERED</p>
@@ -321,6 +343,7 @@ export default function Home() {
                   )}
                 </div>
               )}
+              
               {mission.workspace_uri && (
                 <div className="rounded border border-emerald-700 bg-emerald-900/20 p-3 text-sm">
                   📁 <b>Everything is in one place:</b>{" "}
@@ -329,6 +352,7 @@ export default function Home() {
                   </a>
                 </div>
               )}
+              
               {mission.nodes.filter((n: any) => n.status === "WAITING_APPROVAL").map((n: any) => (
                 <div key={n.node_id} className="flex items-center gap-3 rounded border border-amber-700 bg-amber-900/20 p-3 text-sm">
                   <span className="text-amber-300">{n.capability_id} needs your approval</span>
@@ -336,6 +360,7 @@ export default function Home() {
                   <button onClick={() => decide(n.node_id, false)} className="rounded bg-red-700 px-3 py-1 text-xs font-bold hover:bg-red-600">Reject</button>
                 </div>
               ))}
+              
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <Panel t="Artifacts">
                   {mission.artifacts.length === 0 && <p className="text-xs text-zinc-500">No artifacts yet.</p>}
@@ -354,6 +379,7 @@ export default function Home() {
                   ))}
                 </Panel>
               </div>
+              
               {TERMINAL.includes(mission.state) && (
                 <div className="flex gap-2">
                   <button onClick={forgeNow} className="rounded bg-amber-600 px-4 py-2 text-sm font-bold hover:bg-amber-500">⚒ Forge workflow</button>

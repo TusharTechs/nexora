@@ -86,6 +86,7 @@ class MissionNode(BaseModel):
     retries: int = 0
     replaced_by: Optional[str] = None
     rationale_summary: str = ""
+    persona: Optional[str] = None   # role name from Persona system
     firewall_summary: str = ""    # ADR-037 — safe scan summary
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

@@ -2,6 +2,7 @@ import asyncio
 import uuid
 from typing import Dict, List
 from packages.core.models import Artifact
+from nexora.core.personas import persona_for_capability
 
 
 class MockWorkspaceProvider:
@@ -60,9 +61,17 @@ class MockWorkspaceProvider:
         return Artifact(artifact_id=aid, mission_id=mission_id, node_id=node_id, type=atype,
                         provider="mock", resource_id=aid, uri=f"mock://{atype.lower()}s/{aid}")
 
+    # ---- Artifact-producing methods with Persona integration (Phase 6) ----
+
     async def create_document(self, mission_id, node_id, title, content) -> Artifact:
         await self._enter("docs.create")
-        return self._art("DOC", self._docs, mission_id, node_id, title=title, content=content)
+        persona = persona_for_capability("docs.create")
+        enriched = (f"# {title}\n\n"
+                    f"_Produced by NEXORA's {persona.role}_\n\n"
+                    f"{content or 'Initial details...'}\n\n"
+                    f"---\n**Quality criteria applied:** {persona.quality_criteria}")
+        return self._art("DOC", self._docs, mission_id, node_id,
+                         title=title, content=enriched, persona=persona.role)
 
     async def search_emails(self, query, max_results) -> List[Dict]:
         await self._enter("gmail.search")
@@ -78,19 +87,35 @@ class MockWorkspaceProvider:
 
     async def send_email(self, to, subject, body) -> Artifact:
         await self._enter("gmail.send")
-        return self._art("EMAIL", self._sent, "-", "-", to=to, subject=subject)
+        persona = persona_for_capability("gmail.send")
+        enriched_body = f"{body or ''}\n\n— Sent by NEXORA's {persona.role}"
+        return self._art("EMAIL", self._sent, "-", "-",
+                         to=to, subject=subject, body=enriched_body, persona=persona.role)
 
     async def draft_email(self, to, subject, body) -> Artifact:
         await self._enter("gmail.draft")
-        return self._art("DRAFT", self._drafts, "-", "-", to=to, subject=subject)
+        persona = persona_for_capability("gmail.send")
+        enriched_body = f"{body or ''}\n\n— Drafted by NEXORA's {persona.role}"
+        return self._art("DRAFT", self._drafts, "-", "-",
+                         to=to, subject=subject, body=enriched_body, persona=persona.role)
 
     async def search_files(self, query) -> List[Dict]:
         await self._enter("drive.search")
         return [{"id": f["id"], "name": f["name"], "type": f["type"]} for f in self._files.values()]
 
+    async def read_file(self, file_id) -> Dict:
+        """Read a specific file from mock drive (for context discovery / drive.read)."""
+        await self._enter("drive.read")
+        return self._files.get(file_id, {})
+
     async def create_sheet(self, mission_id, node_id, title, headers) -> Artifact:
         await self._enter("sheets.create")
-        return self._art("SHEET", self._sheets, mission_id, node_id, title=title, headers=headers)
+        persona = persona_for_capability("sheets.create")
+        enriched_title = f"{title} (by {persona.role})"
+        # Add persona note as first row
+        enriched_headers = list(headers or []) + [f"Produced by {persona.role}"]
+        return self._art("SHEET", self._sheets, mission_id, node_id,
+                         title=enriched_title, headers=enriched_headers, persona=persona.role)
 
     async def read_sheet(self, sheet_id, range_) -> List[List]:
         await self._enter("sheets.read")
@@ -98,20 +123,33 @@ class MockWorkspaceProvider:
 
     async def create_event(self, mission_id, node_id, title, attendees) -> Artifact:
         await self._enter("calendar.create_event")
+        persona = persona_for_capability("calendar.create_event")
+        description = f"Scheduled by NEXORA's {persona.role}.\n\nAgenda: TBD by organizer."
         return self._art("EVENT", self._events, mission_id, node_id, title=title,
-                         attendees=attendees, meet_link=f"mock://meet/{uuid.uuid4()}")
+                         attendees=attendees, description=description,
+                         meet_link=f"mock://meet/{uuid.uuid4()}", persona=persona.role)
 
     async def create_task(self, mission_id, node_id, title, notes) -> Artifact:
         await self._enter("tasks.create")
-        return self._art("TASK", self._tasks, mission_id, node_id, title=title, notes=notes)
+        persona = persona_for_capability("tasks.create")
+        enriched_notes = f"{notes or ''}\n\nCreated by NEXORA's {persona.role}."
+        return self._art("TASK", self._tasks, mission_id, node_id,
+                         title=title, notes=enriched_notes, persona=persona.role)
 
     async def create_slides(self, mission_id, node_id, title, slides) -> Artifact:
         await self._enter("slides.create")
-        return self._art("SLIDES", self._slides, mission_id, node_id, title=title, slides=slides)
+        persona = persona_for_capability("slides.create")
+        # Prepend a title slide with persona attribution
+        enriched_slides = [f"{title} — by NEXORA's {persona.role}"] + list(slides or [])
+        return self._art("SLIDES", self._slides, mission_id, node_id,
+                         title=title, slides=enriched_slides, persona=persona.role)
 
     async def send_chat(self, space, text) -> Artifact:
         await self._enter("chat.notify")
-        return self._art("CHAT", self._chats, "-", "-", space=space, text=text)
+        persona = persona_for_capability("chat.notify")
+        enriched_text = f"[{persona.role}] {text}"
+        return self._art("CHAT", self._chats, "-", "-",
+                         space=space, text=enriched_text, persona=persona.role)
 
     async def search_people(self, query) -> List[Dict]:
         await self._enter("people.search")
@@ -119,28 +157,39 @@ class MockWorkspaceProvider:
 
     async def create_form(self, mission_id, node_id, title, questions) -> Artifact:
         await self._enter("forms.create")
-        return self._art("FORM", self._forms, mission_id, node_id, title=title, questions=questions)
+        persona = persona_for_capability("forms.create")
+        enriched_title = f"{title} (by {persona.role})"
+        return self._art("FORM", self._forms, mission_id, node_id,
+                         title=enriched_title, questions=questions, persona=persona.role)
 
     async def analyze_attachment(self, mission_id, node_id, attachment) -> Dict:
         await self._enter("multimodal.analyze")
+        persona = persona_for_capability("multimodal.analyze")
         text = (attachment or {}).get("text", "")
         if not text and (attachment or {}).get("type", "").startswith("image"):
             text = "500 Internal Server Error\nDB_TIMEOUT"   # simulated vision in MOCK
         error_code = "DB_TIMEOUT" if "DB_TIMEOUT" in text else ("500" if "500" in text else "UNKNOWN")
         artifact = self._art("ANALYSIS", self._analysis, mission_id, node_id,
-                             error_code=error_code, source=(attachment or {}).get("name", ""))
+                             error_code=error_code, source=(attachment or {}).get("name", ""),
+                             persona=persona.role)
         return {"error_code": error_code, "timestamp": "2026-08-26T09:41:00Z",
-                "visual_evidence": text.strip(), "artifact": artifact}
+                "visual_evidence": text.strip(), "analyzed_by": persona.role, "artifact": artifact}
 
     async def generate_video(self, mission_id, node_id, prompt) -> Artifact:
         await self._enter("veo.generate_video")
-        return self._art("VIDEO", self._videos, mission_id, node_id, prompt=prompt)
+        persona = persona_for_capability("veo.generate_video")
+        enriched_prompt = f"[{persona.role}] {prompt}"
+        return self._art("VIDEO", self._videos, mission_id, node_id,
+                         prompt=enriched_prompt, persona=persona.role)
 
     async def generate_audio(self, mission_id, node_id, prompt) -> Artifact:
         await self._enter("lyria.generate_audio")
-        return self._art("AUDIO", self._audios, mission_id, node_id, prompt=prompt)
+        persona = persona_for_capability("lyria.generate_audio")
+        enriched_prompt = f"[{persona.role}] {prompt}"
+        return self._art("AUDIO", self._audios, mission_id, node_id,
+                         prompt=enriched_prompt, persona=persona.role)
 
-        # ---- Mission Workspace (ADR-050) ----
+    # ---- Mission Workspace (ADR-050) ----
     def bind(self, mission_id, folder_id):
         pass   # mock artifacts are already mission-scoped
 

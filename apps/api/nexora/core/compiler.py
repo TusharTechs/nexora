@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 from packages.core.models import MissionNode, MissionIntent, MissionConstitution, NodeCondition
 from nexora.core.capability_network import CapabilityNetwork
+from nexora.core.personas import persona_for_capability
 
 KEYWORD_RULES: List[Tuple[Tuple[str, ...], str]] = [
     (("email", "gmail", "inbox", "customer sent"), "gmail.search"),
@@ -92,10 +93,15 @@ class WorkflowCompiler:
             if cap_id == "web.research":
                 inputs["objective"] = goal
                 inputs["max_results"] = 5
+
+            # Phase 6: Assign persona based on capability (ADR-058)
+            persona = persona_for_capability(cap_id)
+
             n = MissionNode(
                 capability_id=cap_id,
                 inputs=inputs,
-                rationale_summary=f"Matched term '{term}' → capability {cap_id} ({cap.name}).",
+                rationale_summary=f"Matched term '{term}' → capability {cap_id} ({cap.name}). [{persona.role}]",
+                persona=persona.role,
             )
             by_cap.setdefault(cap_id, n)
             nodes.append(n)
@@ -114,12 +120,15 @@ class WorkflowCompiler:
         for cap_id, cond, title in conditions:
             cap = self.network.get(cap_id)
             src = by_cap.get(cond.source_capability)
+            # Phase 6: Assign persona to conditional branch nodes too
+            persona = persona_for_capability(cap_id)
             nodes.append(MissionNode(
                 capability_id=cap_id,
                 depends_on=[src.node_id] if src else [],
                 condition=cond,
                 inputs=self._default_inputs(cap_id, intent, title),
-                rationale_summary=f"Conditional branch: {title} runs only if {cond.source_capability} matches '{cond.value}'.",
+                rationale_summary=f"Conditional branch: {title} runs only if {cond.source_capability} matches '{cond.value}'. [{persona.role}]",
+                persona=persona.role,
             ))
         return nodes
 

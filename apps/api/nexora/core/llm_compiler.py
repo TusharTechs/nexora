@@ -14,6 +14,7 @@ from packages.core.models import MissionNode, MissionIntent, MissionConstitution
 from nexora.core.capability_network import CapabilityNetwork
 from nexora.core.model_router import ModelRouter, ModelTier
 from nexora.core.compiler import WorkflowCompiler
+from nexora.core.personas import persona_for_capability
 
 
 class LLMWorkflowCompiler:
@@ -97,9 +98,14 @@ class LLMWorkflowCompiler:
                 continue                                   # not allowed -> drop
             if cid in constitution.forbidden_actions:
                 continue                                   # forbidden -> drop
+
+            # Phase 6: Assign persona based on capability (ADR-058)
+            persona = persona_for_capability(cid)
+
             n = MissionNode(capability_id=cid,
                             inputs=WorkflowCompiler._default_inputs(cid, intent, None),
-                            rationale_summary=f"LLM-compiled: {cid}")
+                            rationale_summary=f"LLM-compiled: {cid} [{persona.role}]",
+                            persona=persona.role)
             # Phase 4: inject web.research-specific inputs
             if cid == "web.research":
                 n.inputs["objective"] = intent.objective
@@ -110,9 +116,12 @@ class LLMWorkflowCompiler:
 
         if attachment and "multimodal.analyze" not in by_cap \
            and "multimodal.analyze" in constitution.allowed_capabilities:
+            # Phase 6: Assign persona to injected multimodal node
+            persona = persona_for_capability("multimodal.analyze")
             n = MissionNode(capability_id="multimodal.analyze",
                             inputs={"attachment": attachment},
-                            rationale_summary="LLM-compiled: attachment analysis")
+                            rationale_summary=f"LLM-compiled: attachment analysis [{persona.role}]",
+                            persona=persona.role)
             by_cap["multimodal.analyze"] = n
             nodes.append(n)
             specs.append((n, []))
@@ -121,10 +130,13 @@ class LLMWorkflowCompiler:
         if (context_bundle and hasattr(context_bundle, "drive_items") and context_bundle.drive_items
                 and "drive.read" not in by_cap
                 and "drive.read" in constitution.allowed_capabilities):
+            # Phase 6: Assign persona to injected drive.read node
+            persona = persona_for_capability("drive.read")
             n = MissionNode(capability_id="drive.read",
                             inputs={"file_id": context_bundle.drive_items[0].resource_id,
                                     "title": context_bundle.drive_items[0].title},
-                            rationale_summary="LLM-compiled: context discovery read")
+                            rationale_summary=f"LLM-compiled: context discovery read [{persona.role}]",
+                            persona=persona.role)
             by_cap["drive.read"] = n
             nodes.append(n)
             specs.append((n, []))
@@ -133,9 +145,12 @@ class LLMWorkflowCompiler:
         if (outcome_contract and getattr(outcome_contract, "needs_external_research", False)
                 and "web.research" not in by_cap
                 and "web.research" in constitution.allowed_capabilities):
+            # Phase 6: Assign persona to injected web.research node
+            persona = persona_for_capability("web.research")
             n = MissionNode(capability_id="web.research",
                             inputs={"objective": intent.objective, "max_results": 5},
-                            rationale_summary="LLM-compiled: contract-required web research")
+                            rationale_summary=f"LLM-compiled: contract-required web research [{persona.role}]",
+                            persona=persona.role)
             by_cap["web.research"] = n
             nodes.append(n)
             specs.append((n, []))
