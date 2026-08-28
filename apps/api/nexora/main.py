@@ -56,7 +56,12 @@ def build_registry(mode: ExecutionMode) -> ProviderRegistry:
         return ProviderRegistry(AcmeLabsProvider())
     return ProviderRegistry(MockWorkspaceProvider())
 
-registry = build_registry(ExecutionMode(os.getenv("EXECUTION_MODE", "MOCK")))
+_default_exec = ExecutionMode.MOCK
+try:
+    _exec_value = ExecutionMode(os.getenv("EXECUTION_MODE", _default_exec.value))
+except ValueError:
+    _exec_value = _default_exec
+registry = build_registry(_exec_value)
 runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
 llm_compiler = LLMWorkflowCompiler(network, router)
 

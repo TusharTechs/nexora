@@ -1,4 +1,4 @@
-"""Semantic Verification — contract-aware outcome checking (ADR-054).
+"""Semantic Verification — contract-aware outcome checking (ADR-054, ADR-060).
 
 Replaces "all nodes succeeded = mission complete" with a contract-aware check:
 does each required deliverable actually exist and satisfy its success criteria?
@@ -6,8 +6,8 @@ does each required deliverable actually exist and satisfy its success criteria?
 The verifier is layered ON TOP OF the existing structural verification — it never
 weakens safety. It runs after structural verification passes.
 
-Two modes:
-- With Gemini API key: LLM-driven semantic check (reads artifact content)
+Two modes (via the Unified LLM Client):
+- With any LLM backend configured: LLM-driven semantic check (reads artifact content)
 - Without: deterministic structural fallback (artifact count vs deliverable count)
 
 The output feeds the replan loop in Phase 5: missing/partial deliverables trigger
@@ -18,8 +18,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class DeliverableStatus(str):
@@ -89,6 +88,7 @@ class SemanticVerifier:
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None,
                  call_fn=None):
+        # api_key kept for backward-compat with tests; transport is the Unified LLM Client.
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY", "")
         self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-2.0-flash")
         self.call_fn = call_fn
@@ -97,7 +97,8 @@ class SemanticVerifier:
                      receipts: List) -> SemanticVerificationReport:
         """Run semantic verification. Never raises — degrades to structural fallback."""
         try:
-            if not self.api_key and not self.call_fn:
+            from nexora.core.llm_client import llm_available
+            if not self.call_fn and not llm_available():
                 return self._structural_fallback(contract, artifacts)
 
             summary = self._build_artifacts_summary(artifacts, receipts)
@@ -148,13 +149,8 @@ class SemanticVerifier:
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(url, headers={"x-goog-api-key": self.api_key},
-                             json={"contents": [{"parts": [{"text": prompt}]}],
-                                   "generationConfig": {"temperature": 0.1}})
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        from nexora.core.llm_client import llm_generate
+        return await llm_generate(prompt, temperature=0.1, model=self.model)
 
     def _serialize_contract(self, contract) -> str:
         if hasattr(contract, "model_dump"):
@@ -168,7 +164,6 @@ class SemanticVerifier:
         for a in artifacts:
             title = getattr(a, "type", "?")
             uri = getattr(a, "uri", "")
-            # Find the receipt for rationale
             receipt = next((r for r in receipts if getattr(r, "output_artifact_id", None) == getattr(a, "artifact_id", None)), None)
             rationale = getattr(receipt, "reason", "") if receipt else ""
             lines.append(f"- {title} ({getattr(a, 'artifact_id', '?')[:8]}): {rationale or uri}")
@@ -195,7 +190,7 @@ class SemanticVerifier:
 
     def _structural_fallback(self, contract, artifacts,
                              error: Optional[str] = None) -> SemanticVerificationReport:
-        """Deterministic fallback when LLM is unavailable.
+        """Deterministic fallback when no LLM backend is configured.
         Uses artifact count as a coarse proxy for deliverable coverage."""
         required = getattr(contract, "required_deliverables", []) or []
         n_required = len(required)
@@ -203,7 +198,6 @@ class SemanticVerifier:
 
         deliverables: List[DeliverableCheck] = []
         for name in required:
-            # Very coarse: mark SATISFIED only if we have more artifacts than required
             status = (DeliverableStatus.SATISFIED
                       if n_artifacts >= n_required
                       else DeliverableStatus.PARTIAL if n_artifacts > 0

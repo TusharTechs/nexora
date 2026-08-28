@@ -215,14 +215,9 @@ class WebResearchService:
         )
 
     async def _call_gemini(self, objective: str, raw_text: str) -> str:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        from nexora.core.llm_client import llm_generate
         prompt = RESEARCH_PROMPT.format(objective=objective, raw_results=raw_text)
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(url, headers={"x-goog-api-key": self.gemini_key},
-                             json={"contents": [{"parts": [{"text": prompt}]}],
-                                   "generationConfig": {"temperature": 0.1}})
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return await llm_generate(prompt, temperature=0.1, model=self.model)
 
     def _parse(self, text: str) -> Optional[Dict[str, Any]]:
         m = re.search(r"\{.*\}", text, re.S)

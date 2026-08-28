@@ -3,6 +3,8 @@ import os
 # never inherits a developer's local .env (e.g. EXECUTION_MODE=LIVE).
 os.environ["EXECUTION_MODE"] = "MOCK"
 os.environ.pop("GEMINI_API_KEY", None)
+os.environ.pop("GCP_PROJECT_ID", None)
+os.environ.pop("NEXORA_LLM_BACKEND", None)
 
 import asyncio
 import pytest

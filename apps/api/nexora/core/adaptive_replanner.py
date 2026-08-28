@@ -169,15 +169,8 @@ class AdaptiveReplanner:
         return self._parse(text)
 
     async def _call_gemini(self, prompt: str) -> str:
-        if not self.api_key:
-            raise RuntimeError("No Gemini API key")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(url, headers={"x-goog-api-key": self.api_key},
-                             json={"contents": [{"parts": [{"text": prompt}]}],
-                                   "generationConfig": {"temperature": 0.2}})
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        from nexora.core.llm_client import llm_generate
+        return await llm_generate(prompt, temperature=0.2, model=self.model)
 
     def _parse(self, text: str) -> List[Dict]:
         m = re.search(r"\{.*\}", text, re.S) or re.search(r"\[.*\]", text, re.S)

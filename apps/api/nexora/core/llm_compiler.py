@@ -1,9 +1,10 @@
-"""LLM Workflow Compiler (ADR-051).
+"""LLM Workflow Compiler (ADR-051, ADR-060).
 
-Natural goal -> Gemini-compiled capability plan. The LLM output is UNTRUSTED:
-every capability is validated against the Capability Network and Constitution.
-If no API key is configured (or the call fails), returns None and the caller
-falls back to the deterministic keyword compiler. Never hard-depends on a model.
+Natural goal -> Gemini-compiled capability plan via the Unified LLM Client.
+The LLM output is UNTRUSTED: every capability is validated against the
+Capability Network and Constitution. If no LLM backend is configured (or the
+call fails), returns None and the caller falls back to the deterministic
+keyword compiler. Never hard-depends on a single backend.
 """
 import json
 import os
@@ -22,6 +23,8 @@ class LLMWorkflowCompiler:
                  api_key: Optional[str] = None, call_fn: Optional[Callable[[str], str]] = None):
         self.network = network
         self.router = router
+        # api_key kept for backward-compat with tests that inject it; the actual
+        # transport is now the Unified LLM Client (reads env vars itself).
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY", "")
         self.call_fn = call_fn   # test seam: inject canned LLM text
 
@@ -29,7 +32,8 @@ class LLMWorkflowCompiler:
                       constitution: MissionConstitution,
                       attachment=None, context_bundle=None,
                       outcome_contract=None) -> Optional[List[MissionNode]]:
-        if not self.api_key and not self.call_fn:
+        from nexora.core.llm_client import llm_available
+        if not self.call_fn and not llm_available():
             return None                      # deterministic fallback path
         try:
             text = await self._call(self._prompt(goal, constitution, context_bundle, outcome_contract))
@@ -41,15 +45,9 @@ class LLMWorkflowCompiler:
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
-        import httpx
+        from nexora.core.llm_client import llm_generate
         model = self.router.route(ModelTier.T2) or os.getenv("NEXORA_MODEL_DEFAULT", "gemini-2.0-flash")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(url, headers={"x-goog-api-key": self.api_key},
-                             json={"contents": [{"parts": [{"text": prompt}]}],
-                                   "generationConfig": {"temperature": 0.2}})
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return await llm_generate(prompt, temperature=0.2, model=model)
 
     def _prompt(self, goal: str, constitution: MissionConstitution,
                 context_bundle=None, outcome_contract=None) -> str:
