@@ -65,12 +65,39 @@ class LLMWorkflowCompiler:
                               "Include a web.research node early in the plan so downstream "
                               "synthesis nodes can consume its findings.\n")
 
+        contract_section = ""
+        if outcome_contract and getattr(outcome_contract, "required_deliverables", None):
+            contract_section = ("\nREQUIRED DELIVERABLES (from Outcome Contract):\n" +
+                                "\n".join(f"- {d}" for d in outcome_contract.required_deliverables) + "\n")
+
+        # Phase 8B: advisory goal guidance
+        advisory_hint = ""
+        goal_lower = goal.lower()
+        if any(word in goal_lower for word in ["learn", "study", "course", "curriculum"]):
+            advisory_hint = ("\nThis is an ADVISORY goal (learning/education). "
+                              "Produce a researched learning plan: use web.research to find "
+                              "current resources, then docs.create to write a structured curriculum.\n")
+        elif any(word in goal_lower for word in ["career", "job", "interview", "promotion"]):
+            advisory_hint = ("\nThis is an ADVISORY goal (career growth). "
+                              "Produce an actionable career plan: use web.research to find "
+                              "industry insights, then docs.create to write a skill development roadmap.\n")
+        elif any(word in goal_lower for word in ["budget", "finance", "save", "invest"]):
+            advisory_hint = ("\nThis is an ADVISORY goal (personal finance). "
+                              "Produce a researched financial plan: use web.research to find "
+                              "current strategies, then sheets.create to build a budget tracker.\n")
+        elif any(word in goal_lower for word in ["rich", "wealth", "money"]):
+            advisory_hint = ("\nThis is a VAGUE ADVISORY goal. "
+                              "Produce a researched, honest plan: use web.research to find "
+                              "evidence-based wealth strategies, then docs.create to write a "
+                              "realistic action plan. Be honest about limitations.\n")
+
         return (f"You are NEXORA's workflow compiler.\nUSER GOAL: {goal}\n"
                 f"CAPABILITY CATALOG:\n{catalog}\n"
-                f"{context_section}{research_hint}"
+                f"{context_section}{contract_section}{research_hint}{advisory_hint}"
                 "Return ONLY JSON: {\"nodes\":[{\"capability_id\":\"...\",\"depends_on\":[\"capability_id\",...]}]}.\n"
                 "Rules: use only catalog ids; research/search capabilities before synthesis ones; minimal plan."
-                " If existing context is available, prefer reading it over creating generic documents.")
+                " If existing context is available, prefer reading it over creating generic documents."
+                " For advisory goals, always include web.research for evidence gathering.")
 
     # ---- deterministic validation + two-pass wiring (ADR-048) ----
     def parse_plan(self, text: str, constitution: MissionConstitution,

@@ -26,6 +26,38 @@ SYNTHESIS_CAPS = {"docs.create", "calendar.create_event", "gmail.send", "slides.
                   "chat.notify", "tasks.create", "forms.create",
                   "veo.generate_video", "lyria.generate_audio"}
 
+# Phase 8B: contract-driven capability selection (general vocabulary, never goal-specific)
+# Expanded to cover advisory goals (learning, career, finance, vague "get rich")
+CONTRACT_CAP_RULES: List[Tuple[Tuple[str, ...], str]] = [
+    # Business workflows
+    (("financial", "revenue", "model", "budget", "forecast"), "sheets.create"),
+    (("market", "competitor", "research", "viability"), "web.research"),
+    (("deck", "presentation", "slides", "pitch"), "slides.create"),
+    (("meeting", "kickoff", "schedule"), "calendar.create_event"),
+    (("task", "follow-up", "action"), "tasks.create"),
+    (("report", "summary", "plan", "analysis", "assessment", "recommendation"), "docs.create"),
+    
+    # Advisory goals: learning
+    (("learning", "curriculum", "roadmap", "course", "study"), "docs.create"),
+    (("resource", "book", "tutorial", "documentation"), "web.research"),
+    (("schedule", "timeline", "milestone"), "docs.create"),
+    (("project", "portfolio", "hands-on"), "docs.create"),
+    
+    # Advisory goals: career
+    (("career", "job", "interview", "promotion", "skill"), "docs.create"),
+    (("resume", "cv", "portfolio"), "docs.create"),
+    (("networking", "mentor", "coach"), "web.research"),
+    
+    # Advisory goals: finance
+    (("budget", "savings", "investment", "expense"), "sheets.create"),
+    (("income", "revenue", "cashflow"), "sheets.create"),
+    (("tax", "deduction", "credit"), "web.research"),
+    
+    # Vague goals: "get rich" / "make money"
+    (("rich", "wealth", "money", "income"), "web.research"),
+    (("strategy", "approach", "method"), "docs.create"),
+]
+
 class WorkflowCompiler:
     def __init__(self, network: CapabilityNetwork):
         self.network = network
@@ -38,6 +70,11 @@ class WorkflowCompiler:
             hit = next((t for t in terms if t in text), None)
             if hit and cap_id in constitution.allowed_capabilities and cap_id not in [c for c, _ in selected]:
                 selected.append((cap_id, hit))
+
+        # Phase 8B: merge contract-driven capabilities
+        for cap_id, term in self._contract_caps(outcome_contract, constitution):
+            if cap_id not in [c for c, _ in selected]:
+                selected.append((cap_id, term))
 
         conditions: List[Tuple[str, NodeCondition, str]] = []
         if "war room" in text or "escalation" in text:
@@ -61,18 +98,22 @@ class WorkflowCompiler:
         if attachment and "multimodal.analyze" not in [c for c, _ in selected]:
             selected.append(("multimodal.analyze", "attachment"))
 
-        # Phase 3: If context bundle contains Drive files, prefer reading them over generic docs.create
+        # Phase 3: If context bundle contains Drive files, prefer reading them when relevant
         if context_bundle and hasattr(context_bundle, "drive_items") and context_bundle.drive_items:
-            if "drive.read" in constitution.allowed_capabilities and "drive.read" not in [c for c, _ in selected]:
-                selected.append(("drive.read", "context"))
+            drive_terms = ("drive", "file", "contract", "concept", "launch notes", "ghost")
+            entities_str = " ".join(getattr(context_bundle, "goal_entities", []) or []).lower()
+            if any(t in text for t in drive_terms) or any(t in entities_str for t in drive_terms):
+                if "drive.read" in constitution.allowed_capabilities and "drive.read" not in [c for c, _ in selected]:
+                    selected.append(("drive.read", "context"))
 
         # Phase 4: If the Outcome Contract requires external research, add web.research.
         # Controlled trigger — only fires when the contract explicitly needs it.
+        # Phase 4: If the Outcome Contract requires external research, add web.research
         if outcome_contract and getattr(outcome_contract, "needs_external_research", False):
             if "web.research" in constitution.allowed_capabilities and "web.research" not in [c for c, _ in selected]:
                 selected.append(("web.research", "contract"))
 
-        if not selected:
+        if not any(c in SYNTHESIS_CAPS for c, _ in selected):
             selected.append(("docs.create", "fallback"))
 
         # Pass 1: create every node first so each gets its real node_id (a UUID) —
@@ -131,6 +172,22 @@ class WorkflowCompiler:
                 persona=persona.role,
             ))
         return nodes
+
+    def _contract_caps(self, outcome_contract, constitution) -> List[Tuple[str, str]]:
+        """Extract capabilities from contract deliverables/evidence vocabulary (ADR-061).
+        Minimal fallback contracts (≤1 deliverable) do not expand the plan."""
+        if outcome_contract is None:
+            return []
+        items = list(getattr(outcome_contract, "required_deliverables", []) or [])
+        items += list(getattr(outcome_contract, "required_evidence", []) or [])
+        if len(items) <= 1:
+            return []   # minimal fallback contract — do not expand the plan
+        out: List[Tuple[str, str]] = []
+        for terms, cap_id in CONTRACT_CAP_RULES:
+            hit = next((it for it in items if any(t in it.lower() for t in terms)), None)
+            if hit and cap_id in constitution.allowed_capabilities:
+                out.append((cap_id, f"contract:{hit[:30]}"))
+        return out
 
     @staticmethod
     def _default_inputs(cap_id: str, intent: MissionIntent, title: Optional[str]) -> dict:

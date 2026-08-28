@@ -27,6 +27,8 @@ from nexora.core.memory import InMemoryMemoryStore, TeachExtractor
 from nexora.core.forge import WorkflowForge
 from nexora.core.credential_store import LocalCredentialStore
 from nexora.core.model_router import ModelRouter
+from nexora.core.contract import ContractGenerator
+from nexora.core.context_discovery import ContextDiscoveryService
 from nexora.agents.interpreter import MissionInterpreter
 from nexora.agents.critic import PlanCritic
 from nexora.providers.mock_workspace import MockWorkspaceProvider
@@ -56,12 +58,7 @@ def build_registry(mode: ExecutionMode) -> ProviderRegistry:
         return ProviderRegistry(AcmeLabsProvider())
     return ProviderRegistry(MockWorkspaceProvider())
 
-_default_exec = ExecutionMode.MOCK
-try:
-    _exec_value = ExecutionMode(os.getenv("EXECUTION_MODE", _default_exec.value))
-except ValueError:
-    _exec_value = _default_exec
-registry = build_registry(_exec_value)
+registry = build_registry(ExecutionMode(os.getenv("EXECUTION_MODE", "MOCK")))
 runtime = MissionRuntime(repo, network, registry, bus, firewall, audit, memory)
 llm_compiler = LLMWorkflowCompiler(network, router)
 
@@ -109,7 +106,22 @@ async def create_mission(req: GoalRequest):
     try:
         mission.state = MissionStateMachine.transition(mission.state, MissionState.INTERPRETING)
         mission.intent = await MissionInterpreter(router).interpret(req.goal)
-
+        # Set runtime registry matching execution mode if specialized
+        if req.execution_mode == ExecutionMode.ACME_LABS and not isinstance(runtime.registry.provider, AcmeLabsProvider):
+            runtime.registry = build_registry(ExecutionMode.ACME_LABS)
+            runtime.executor.registry = runtime.registry
+            runtime.supervisor.registry = runtime.registry
+        elif req.execution_mode == ExecutionMode.LIVE:
+            from nexora.providers.live_workspace import LiveWorkspaceProvider
+            if not isinstance(runtime.registry.provider, LiveWorkspaceProvider):
+                runtime.registry = build_registry(ExecutionMode.LIVE)
+                runtime.executor.registry = runtime.registry
+                runtime.supervisor.registry = runtime.registry
+        # Outcome Contract (ADR-053) & Context Discovery (ADR-055)
+        contract_gen = ContractGenerator()
+        mission.outcome_contract = await contract_gen.generate(req.goal, mission.intent)
+        ctx_svc = ContextDiscoveryService(runtime.registry.provider)
+        mission.context_bundle = await ctx_svc.discover(req.goal, mission.outcome_contract)
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
         mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
 
@@ -127,10 +139,14 @@ async def create_mission(req: GoalRequest):
 
         # LLM compiler (ADR-051) with deterministic keyword fallback (ADR-031)
         mission.nodes = await llm_compiler.compile(mission.goal, mission.intent,
-                                                   mission.constitution, attachment=req.attachment)
+                                                   mission.constitution, attachment=req.attachment,
+                                                   context_bundle=mission.context_bundle,
+                                                   outcome_contract=mission.outcome_contract)
         if not mission.nodes:
             mission.nodes = await WorkflowCompiler(network).compile(mission.goal, mission.intent,
-                                                                    mission.constitution, attachment=req.attachment)
+                                                                    mission.constitution, attachment=req.attachment,
+                                                                    context_bundle=mission.context_bundle,
+                                                                    outcome_contract=mission.outcome_contract)
 
         mission.state = MissionStateMachine.transition(mission.state, MissionState.CRITICIZING)
         critique = await PlanCritic(network).critique(mission.nodes, mission.constitution)
@@ -152,7 +168,6 @@ async def create_mission(req: GoalRequest):
         return mission
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/internal/execute_node")
 async def execute_node_internal(ref: NodeRef):
@@ -421,17 +436,19 @@ async def get_receipts(mission_id: str):
 async def get_verification(mission_id: str):
     return (await _get_or_404(mission_id)).verification
 
-# ---------------- Phase 1-4 Inspection Endpoints ----------------
+@app.get("/api/v1/missions/{mission_id}/constitution")
+async def get_constitution(mission_id: str):
+    return (await _get_or_404(mission_id)).constitution
 
 @app.get("/api/v1/missions/{mission_id}/contract")
 async def get_contract(mission_id: str):
     mission = await _get_or_404(mission_id)
     if mission.outcome_contract is None:
         raise HTTPException(status_code=404, detail="No contract generated")
+    # Handle both OutcomeContract instance and plain dict
     if hasattr(mission.outcome_contract, "model_dump"):
         return mission.outcome_contract.model_dump(mode="json")
     return mission.outcome_contract
-
 
 @app.get("/api/v1/missions/{mission_id}/verification/semantic")
 async def get_semantic_verification(mission_id: str):
@@ -442,7 +459,6 @@ async def get_semantic_verification(mission_id: str):
         return mission.semantic_verification.model_dump(mode="json")
     return mission.semantic_verification
 
-
 @app.get("/api/v1/missions/{mission_id}/context")
 async def get_context(mission_id: str):
     mission = await _get_or_404(mission_id)
@@ -451,10 +467,6 @@ async def get_context(mission_id: str):
     if hasattr(mission.context_bundle, "model_dump"):
         return mission.context_bundle.model_dump(mode="json")
     return mission.context_bundle
-
-@app.get("/api/v1/missions/{mission_id}/constitution")
-async def get_constitution(mission_id: str):
-    return (await _get_or_404(mission_id)).constitution
 
 @app.post("/api/v1/missions/{mission_id}/replan")
 async def trigger_adaptive_replan(mission_id: str):

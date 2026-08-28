@@ -198,6 +198,8 @@ class MockWorkspaceProvider:
         return {"folder_id": fid, "uri": f"mock://workspace/{fid}"}
 
     async def verify_artifact(self, artifact: Artifact) -> bool:
+        if artifact.type == "RESEARCH":
+            return bool(artifact.resource_id)
         store = {"DOC": self._docs, "SHEET": self._sheets, "EVENT": self._events, "EMAIL": self._sent,
                  "DRAFT": self._drafts, "TASK": self._tasks, "SLIDES": self._slides, "CHAT": self._chats,
                  "VIDEO": self._videos, "AUDIO": self._audios, "FORM": self._forms,

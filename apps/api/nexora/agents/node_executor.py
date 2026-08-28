@@ -86,6 +86,8 @@ class NodeExecutor:
             artifact = await provider.draft_email(node.inputs.get("to", []), node.inputs.get("subject", ""), node.inputs.get("body", ""))
         elif node.capability_id == "drive.search":
             node.outputs["search_results"] = await provider.search_files(node.inputs.get("query", ""))
+        elif node.capability_id == "drive.read":
+            node.outputs["file"] = await provider.read_file(node.inputs.get("file_id", ""))
         elif node.capability_id == "sheets.create":
             artifact = await provider.create_sheet(mission_id, node.node_id, node.inputs.get("title", "Sheet"), node.inputs.get("headers", []))
         elif node.capability_id == "sheets.read":
