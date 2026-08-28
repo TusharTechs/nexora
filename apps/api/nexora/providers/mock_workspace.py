@@ -11,6 +11,7 @@ class MockWorkspaceProvider:
         self._docs, self._sheets, self._events, self._sent = {}, {}, {}, {}
         self._drafts, self._tasks, self._slides, self._chats = {}, {}, {}, {}
         self._videos, self._audios, self._forms, self._analysis = {}, {}, {}, {}
+        self._images = {}   # Phase 10: image store
         self._emails = {
             "msg_clean": {"id": "msg_clean", "subject": "URGENT: Checkout Down",
                           "snippet": "Customers cannot pay.",
@@ -44,6 +45,7 @@ class MockWorkspaceProvider:
         self._sent.clear(); self._drafts.clear(); self._tasks.clear()
         self._slides.clear(); self._chats.clear(); self._videos.clear()
         self._audios.clear(); self._forms.clear(); self._analysis.clear()
+        self._images.clear()   # Phase 10
         self._active = 0; self.max_concurrency = 0; self.fail_caps.clear()
 
     async def _enter(self, cap: str):
@@ -189,6 +191,14 @@ class MockWorkspaceProvider:
         return self._art("AUDIO", self._audios, mission_id, node_id,
                          prompt=enriched_prompt, persona=persona.role)
 
+    # ---- Phase 10: Image Generation (mock) ----
+    async def generate_image(self, mission_id, node_id, prompt) -> Artifact:
+        await self._enter("imagen.generate_image")
+        persona = persona_for_capability("imagen.generate_image")
+        enriched_prompt = f"[{persona.role}] {prompt}"
+        return self._art("IMAGE", self._images, mission_id, node_id,
+                         prompt=enriched_prompt, persona=persona.role)
+
     # ---- Mission Workspace (ADR-050) ----
     def bind(self, mission_id, folder_id):
         pass   # mock artifacts are already mission-scoped
@@ -203,7 +213,7 @@ class MockWorkspaceProvider:
         store = {"DOC": self._docs, "SHEET": self._sheets, "EVENT": self._events, "EMAIL": self._sent,
                  "DRAFT": self._drafts, "TASK": self._tasks, "SLIDES": self._slides, "CHAT": self._chats,
                  "VIDEO": self._videos, "AUDIO": self._audios, "FORM": self._forms,
-                 "ANALYSIS": self._analysis}
+                 "ANALYSIS": self._analysis, "IMAGE": self._images}   # Phase 10: added IMAGE
         return artifact.resource_id in store.get(artifact.type, {})
 
     async def web_research(self, objective: str, max_results: int = 5) -> Dict:

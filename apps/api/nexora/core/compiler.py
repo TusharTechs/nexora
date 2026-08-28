@@ -19,12 +19,16 @@ KEYWORD_RULES: List[Tuple[Tuple[str, ...], str]] = [
     (("people", "contacts", "stakeholder"), "people.search"),
     (("video",), "veo.generate_video"),
     (("audio", "briefing"), "lyria.generate_audio"),
+    # Phase 10: Image generation for visual/travel/creative goals
+    (("photo", "picture", "visual", "illustration", "island", "beach",
+      "travel", "vacation", "destination", "trip"), "imagen.generate_image"),
 ]
 RESEARCH_CAPS = {"gmail.search", "drive.search", "drive.read", "multimodal.analyze",
                  "sheets.read", "people.search", "web.research"}
+# Phase 10: Added imagen.generate_image to synthesis capabilities
 SYNTHESIS_CAPS = {"docs.create", "calendar.create_event", "gmail.send", "slides.create",
                   "chat.notify", "tasks.create", "forms.create",
-                  "veo.generate_video", "lyria.generate_audio"}
+                  "veo.generate_video", "lyria.generate_audio", "imagen.generate_image"}
 
 # Phase 8B: contract-driven capability selection (general vocabulary, never goal-specific)
 # Expanded to cover advisory goals (learning, career, finance, vague "get rich")
@@ -56,6 +60,10 @@ CONTRACT_CAP_RULES: List[Tuple[Tuple[str, ...], str]] = [
     # Vague goals: "get rich" / "make money"
     (("rich", "wealth", "money", "income"), "web.research"),
     (("strategy", "approach", "method"), "docs.create"),
+    
+    # Phase 10: Visual/travel/creative goals
+    (("image", "photo", "picture", "visual", "illustration"), "imagen.generate_image"),
+    (("travel", "island", "beach", "vacation", "destination", "trip"), "imagen.generate_image"),
 ]
 
 class WorkflowCompiler:
@@ -224,4 +232,7 @@ class WorkflowCompiler:
             return {"prompt": f"Launch video for {intent.objective}"}
         if cap_id == "lyria.generate_audio":
             return {"prompt": f"Executive audio briefing for {intent.objective}"}
+        # Phase 10: Image generation default inputs
+        if cap_id == "imagen.generate_image":
+            return {"prompt": f"Photorealistic, vibrant photography-style image for: {intent.objective}"}
         return {"title": title or f"Report - {intent.objective}", "content": "Initial details..."}

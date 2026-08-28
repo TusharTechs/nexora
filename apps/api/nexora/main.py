@@ -352,12 +352,14 @@ REDIRECT_URI = "http://localhost:8000/api/v1/auth/callback"
 GOOGLE_SCOPES = [
     "openid", "email", "profile",
     "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.readonly",   # <-- ADDED: Read Drive files
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/tasks",
     "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",   # <-- ADDED: Read Gmail
 ]
 
 @app.get("/api/v1/auth/google")

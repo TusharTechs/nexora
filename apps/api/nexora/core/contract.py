@@ -65,6 +65,7 @@ Rules:
 - Be concrete, not vague.
 - Deliverables should be specific (e.g. "financial model spreadsheet" not "financial analysis").
 - If the goal requires information outside the user's own files (market data, competitors, external facts), set needs_external_research to true.
+- For travel, recommendation, or creative goals, include a visual deliverable (e.g. "inspiration images").
 - Do NOT include tool names (no "google docs", no "veo"). Describe outcomes, not tools.
 - Keep it concise: 3-8 deliverables, 3-6 success criteria, 2-5 evidence items.
 """
@@ -162,6 +163,20 @@ class ContractGenerator:
                 required_deliverables=["Wealth strategy roadmap", "Feasibility and risk analysis"],
                 required_evidence=["Market data"],
                 constraints=[],
+                needs_external_research=True,
+            )
+        # Phase 10: Travel/visual/recommendation goals
+        elif any(w in goal_lower for w in ["travel", "island", "beach", "vacation", "trip",
+                                            "visit", "recommend", "photo", "picture",
+                                            "destination", "visual", "illustration"]):
+            return OutcomeContract(
+                objective=goal,
+                success_criteria=["Research-based recommendations produced", "Written travel/recommendation guide completed", "Inspiring visual imagery generated"],
+                required_deliverables=["Travel or recommendation guide document",
+                                        "Inspiration images (visual imagery of recommended destinations)",
+                                        "Research summary with cited sources"],
+                required_evidence=["Travel reviews and ratings", "Destination information", "Photography references"],
+                constraints=["Use reputable travel sources"],
                 needs_external_research=True,
             )
         else:

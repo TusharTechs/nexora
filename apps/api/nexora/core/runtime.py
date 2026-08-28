@@ -271,7 +271,7 @@ class MissionRuntime:
             return
 
         try:
-            artifact, receipt = await self.executor.execute(mission_id, node, mission.constitution, mission.execution_mode)
+            artifact, receipt = await self.executor.execute(mission_id, node, mission.constitution, mission.execution_mode, mission)
             node.status = "SUCCESS"
             node.completed_at = utcnow()
             if artifact:

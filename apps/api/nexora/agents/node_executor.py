@@ -21,7 +21,51 @@ class NodeExecutor:
         self.firewall = firewall
         self.audit = audit
 
-    async def execute(self, mission_id, node, constitution, mode):
+    def _summarize_upstream(self, mission, node) -> str:
+        """Build doc content from upstream search/research outputs (Phase 9)."""
+        if mission is None:
+            return node.inputs.get("content") or ""
+
+        # Use declared deps; if none, scan all other nodes for data
+        deps = node.depends_on or []
+        sources = [n for n in mission.nodes if n.node_id in deps]
+        if not sources:
+            sources = [n for n in mission.nodes if n.node_id != node.node_id]
+
+        lines = []
+        for dep in sources:
+            outs = dep.outputs or {}
+
+            # Gmail / Drive search results
+            for item in outs.get("search_results", []) or []:
+                subj = item.get("subject") or item.get("title") or item.get("name") or "Result"
+                snip = item.get("snippet") or item.get("body") or ""
+                lines.append(f"• {subj}\n  {str(snip)[:300]}")
+
+            # Web research findings
+            research = outs.get("research")
+            if isinstance(research, dict):
+                for f in research.get("findings", []) or []:
+                    title = f.get("title") or f.get("url") or "Finding"
+                    snip = f.get("snippet") or f.get("summary") or ""
+                    lines.append(f"• {title}\n  {str(snip)[:300]}")
+
+            # Single email read
+            email = outs.get("email") or {}
+            if email and email.get("body"):
+                lines.append(f"• Email: {email.get('subject', 'No subject')}\n  {str(email.get('body'))[:300]}")
+
+            # Drive file read
+            file_data = outs.get("file") or {}
+            if file_data and file_data.get("content"):
+                lines.append(f"• File: {file_data.get('title', 'Untitled')}\n  {str(file_data.get('content'))[:300]}")
+
+        if lines:
+            title = node.inputs.get("title") or "Summary"
+            return f"{title}\n\n" + "\n\n".join(lines)
+        return node.inputs.get("content") or "No upstream data was available to summarize."
+
+    async def execute(self, mission_id, node, constitution, mode, mission=None):
         cap = self.network.get(node.capability_id)
         if cap is None:
             raise ValueError(f"Unknown capability {node.capability_id}")
@@ -48,8 +92,11 @@ class NodeExecutor:
         action = node.capability_id
 
         if node.capability_id == "docs.create":
+            # Phase 9: enrich doc content from upstream search/research outputs
+            content = self._summarize_upstream(mission, node)
             artifact = await provider.create_document(mission_id, node.node_id,
-                node.inputs.get("title", "Doc"), node.inputs.get("content", ""))
+                node.inputs.get("title", "Doc"), content)
+
         elif node.capability_id == "gmail.search":
             results = await provider.search_emails(node.inputs.get("query", ""), node.inputs.get("max_results", 5))
             scans = []
@@ -66,20 +113,41 @@ class NodeExecutor:
                                   "quarantined": r.quarantined,
                                   "categories": [m.category for m in r.matches]}))
             node.outputs["search_results"] = results
+
+            # Phase 9: handle empty results gracefully (fixes max() on empty)
+            if scans:
+                verdict_scores = {"CLEAN": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}
+                worst_verdict = max((s["verdict"] for s in scans), key=lambda v: verdict_scores.get(v, 0))
+            else:
+                worst_verdict = "CLEAN"
+
             node.outputs["search_results_firewall"] = {
-                "verdict": max((s["verdict"] for s in scans),
-                               key=lambda v: {"CLEAN": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}[v]),
+                "verdict": worst_verdict,
                 "scanned_count": len(scans),
                 "quarantined_count": sum(1 for s in scans if s["quarantined"]),
                 "per_message": scans}
             node.firewall_summary = (f"Scanned {len(scans)} message(s); "
                                      f"{node.outputs['search_results_firewall']['quarantined_count']} quarantined.")
+
         elif node.capability_id == "gmail.read":
-            msg = await provider.read_email(node.inputs.get("message_id", ""))
-            r = self.firewall.scan(msg.get("body", ""))
-            node.outputs["email"] = msg
-            node.outputs["email_firewall"] = {"verdict": r.verdict.value, "quarantined": r.quarantined}
-            node.firewall_summary = r.safe_summary
+            # Phase 9: graceful handling when message_id missing — pass-through
+            msg_id = node.inputs.get("message_id", "")
+            if not msg_id:
+                node.outputs["email"] = {"body": "(No specific message ID — using upstream search results)"}
+                node.outputs["email_firewall"] = {"verdict": "CLEAN", "quarantined": False}
+                node.firewall_summary = "Pass-through: no message_id provided."
+            else:
+                try:
+                    msg = await provider.read_email(msg_id)
+                    r = self.firewall.scan(msg.get("body", ""))
+                    node.outputs["email"] = msg
+                    node.outputs["email_firewall"] = {"verdict": r.verdict.value, "quarantined": r.quarantined}
+                    node.firewall_summary = r.safe_summary
+                except Exception as e:
+                    node.outputs["email"] = {"body": f"(Read failed: {e})"}
+                    node.outputs["email_firewall"] = {"verdict": "CLEAN", "quarantined": False}
+                    node.firewall_summary = f"Read failed gracefully: {e}"
+
         elif node.capability_id == "gmail.send":
             artifact = await provider.send_email(node.inputs.get("to", []), node.inputs.get("subject", ""), node.inputs.get("body", ""))
         elif node.capability_id == "gmail.draft":
@@ -118,7 +186,6 @@ class NodeExecutor:
                 node.inputs.get("objective", node.inputs.get("query", "")),
                 node.inputs.get("max_results", 5))
             node.outputs["research"] = result_dict
-            # Create a RESEARCH artifact
             artifact = Artifact(
                 artifact_id=str(uuid.uuid4()),
                 mission_id=mission_id,
@@ -129,6 +196,9 @@ class NodeExecutor:
                 uri=f"research://findings/{node.node_id}",
             )
             node.rationale_summary += f" [found {result_dict.get('sources_cited', 0)} cited findings]"
+        elif node.capability_id == "imagen.generate_image":
+            artifact = await provider.generate_image(mission_id, node.node_id, node.inputs.get("prompt", ""))
+            node.rationale_summary += " [image generated]"
         else:
             raise ValueError(f"No executor route for {node.capability_id}")
 

@@ -7,11 +7,28 @@ import { useVoice } from "@/hooks/useVoice";
 
 const API = "http://localhost:8000";
 const TERMINAL = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"];
+
+// Phase 12: Expanded scenario library covering all goal types
 const SCENARIOS = [
+  // Business & Work
   { label: "💼 Business Launch", goal: "I'm starting my new business project tomorrow. Prepare everything I need: business plan doc, learning materials, budget sheet, pitch deck, kickoff meeting, and tasks." },
   { label: "🚀 Launch Aurora", goal: "Prepare everything to launch Product X next Friday: research, budget sheet, meetings, deck, announcement." },
   { label: "🚨 Customer Escalation", goal: "A customer sent a screenshot of a production error. Investigate, analyze the screenshot, estimate impact, create the incident report, notify the team, and create follow-up tasks." },
   { label: "📊 Weekly Review", goal: "Search emails and drive files, read the metrics sheet, and write the weekly business report." },
+  { label: "📧 Email Summary", goal: "Search my inbox for recent emails and create a summary of what I missed." },
+  // Travel & Lifestyle (Phase 10: Imagen images)
+  { label: "🏝 Dream Trip", goal: "I want to go to the best island in the world. Recommend where I should go and prepare a travel brief with pictures." },
+  { label: "🎧 Island + Audio Guide", goal: "Recommend the best island in the world with pictures AND an audio narration of the top picks." },
+  // Learning & Development
+  { label: "🤖 Learn AI", goal: "Prepare a comprehensive plan to learn AI in 2026, including resources and a study schedule." },
+  { label: "🎙️ Audio AI Briefing", goal: "Give me an audio briefing about the most important AI news this week." },
+  { label: "📈 Career Growth", goal: "Help me get promoted to senior engineer in 6 months. Create a skill development roadmap." },
+  // Personal Finance
+  { label: "🏠 House Down Payment", goal: "Create a budget plan to save for a house down payment. I earn $80k/year." },
+  { label: "💰 Wealth Strategy", goal: "How do I get rich? Give me an honest, research-based wealth building strategy." },
+  // Creative & Demo
+  { label: "👻 Ghost Run", goal: "Evaluate whether Ghost Run can succeed commercially and prepare everything I need for launch." },
+  { label: "📚 Short Story", goal: "Write a short story about time travel with character development and plot twists." },
 ];
 
 // Safe fetch wrapper so the UI never crashes if the backend is down
@@ -26,7 +43,7 @@ async function safeGet(url: string): Promise<any | null> {
 }
 
 export default function Home() {
-  const [goal, setGoal] = useState(SCENARIOS[1].goal);
+  const [goal, setGoal] = useState(SCENARIOS[5].goal); // Default: Dream Trip
   const [intervention, setIntervention] = useState("");
   const [teach, setTeach] = useState("");
   const [mission, setMission] = useState<any>(null);
@@ -38,6 +55,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
   const [gConnected, setGConnected] = useState<boolean | null>(null);
+
+  // Phase 12: Execution mode selector (MOCK demo vs LIVE real workspace)
+  const [execMode, setExecMode] = useState<"MOCK" | "LIVE">("MOCK");
 
   // Phase 9.2: Attachment & Voice State
   const [attachment, setAttachment] = useState<any | null>(null);
@@ -92,9 +112,12 @@ export default function Home() {
     try {
       const r = await fetch(`${API}/api/v1/missions`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, execution_mode: "MOCK", attachment }),
+        body: JSON.stringify({ goal, execution_mode: execMode, attachment }),
       });
-      if (!r.ok) throw new Error(`API error ${r.status}`);
+      if (!r.ok) {
+        const detail = await r.json().catch(() => null);
+        throw new Error(detail?.detail || `API error ${r.status}`);
+      }
       setMission(await r.json());
       setAttachment(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -142,6 +165,24 @@ export default function Home() {
       </header>
 
       <div className="mx-auto max-w-3xl">
+        {/* Phase 12: Execution mode selector */}
+        <section className="mb-4 flex justify-center gap-2">
+          <button onClick={() => setExecMode("MOCK")}
+            className={`rounded-full border px-4 py-1.5 text-xs font-bold ${execMode === "MOCK" ? "border-sky-500 bg-sky-900/40 text-sky-200" : "border-zinc-700 text-zinc-500 hover:border-zinc-500"}`}>
+            🧪 MOCK (demo)
+          </button>
+          <button onClick={() => setExecMode("LIVE")}
+            className={`rounded-full border px-4 py-1.5 text-xs font-bold ${execMode === "LIVE" ? "border-emerald-500 bg-emerald-900/40 text-emerald-200" : "border-zinc-700 text-zinc-500 hover:border-zinc-500"}`}>
+            🔴 LIVE (real Google)
+          </button>
+        </section>
+        {execMode === "LIVE" && gConnected === false && (
+          <p className="mb-3 text-center text-xs text-amber-400">
+            ⚠️ LIVE mode needs a Google connection —{" "}
+            <a href={`${API}/api/v1/auth/google`} className="underline">connect now</a>.
+          </p>
+        )}
+
         {/* Scenario chips */}
         <section className="mb-4 flex flex-wrap justify-center gap-2">
           {SCENARIOS.map((s) => (
@@ -257,13 +298,18 @@ export default function Home() {
         )}
 
         {/* Footer links */}
-        <footer className="mt-8 flex justify-center gap-6 text-xs text-zinc-500">
-          <a href="/scenarios" className="underline hover:text-zinc-300">Scenario Gallery</a>
-          <a href="/explorer" className="underline hover:text-zinc-300">Capability Explorer</a>
-          {gConnected === false && (
-            <a href={`${API}/api/v1/auth/google`} className="text-sky-400 underline">🔗 Connect Google</a>
-          )}
-          {gConnected === true && <span className="text-emerald-400">● Google connected</span>}
+        <footer className="mt-8 flex flex-col items-center gap-2 text-xs text-zinc-500">
+          <div className="flex justify-center gap-6">
+            <a href="/scenarios" className="underline hover:text-zinc-300">Scenario Gallery</a>
+            <a href="/explorer" className="underline hover:text-zinc-300">Capability Explorer</a>
+            {gConnected === false && (
+              <a href={`${API}/api/v1/auth/google`} className="text-sky-400 underline">🔗 Connect Google</a>
+            )}
+            {gConnected === true && <span className="text-emerald-400">● Google connected</span>}
+          </div>
+          <p className="text-center">
+            Cost: Imagen ~$0.04/image • Lyria ~$0.02-0.05/audio • Gemini ~$0.001/plan
+          </p>
         </footer>
       </div>
 

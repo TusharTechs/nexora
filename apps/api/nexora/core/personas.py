@@ -35,7 +35,7 @@ class Persona:
         }
 
 
-# ---- The 6 specialist personas ----
+# ---- The specialist personas ----
 
 RESEARCH_ANALYST = Persona(
     role="Research Analyst",
@@ -85,6 +85,17 @@ DESIGNER = Persona(
                      "evidence, ask. Use visuals over bullets where possible.",
 )
 
+# Phase 10: Visual Designer for image generation (Imagen)
+VISUAL_DESIGNER = Persona(
+    role="Visual Designer",
+    objective="Generate photorealistic, inspiring imagery that reinforces the narrative.",
+    style="Cinematic composition, vivid color palette, high-detail photography style.",
+    quality_criteria="Images are photorealistic and emotionally evocative. Composition "
+                     "uses rule of thirds. Subject is clearly recognizable. No text overlays "
+                     "unless explicitly requested. Aspect ratio matches context (16:9 for "
+                     "landscapes, 1:1 for icons).",
+)
+
 
 # Capability → Persona mapping (deterministic, fixed)
 # Capabilities not listed here use a generic DEFAULT persona.
@@ -118,10 +129,12 @@ CAPABILITY_PERSONA_MAP: Dict[str, Persona] = {
     "chat.notify": COORDINATOR,
     "forms.create": COORDINATOR,
 
-    # Design / presentation
+    # Design / presentation / media
     "slides.create": DESIGNER,
     "veo.generate_video": DESIGNER,
     "lyria.generate_audio": DESIGNER,
+    # Phase 10: Image generation
+    "imagen.generate_image": VISUAL_DESIGNER,
 }
 
 
@@ -139,4 +152,6 @@ def all_personas() -> Dict[str, Persona]:
         "writer": WRITER,
         "coordinator": COORDINATOR,
         "designer": DESIGNER,
+        # Phase 10
+        "visual_designer": VISUAL_DESIGNER,
     }

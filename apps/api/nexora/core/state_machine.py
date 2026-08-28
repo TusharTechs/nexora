@@ -8,7 +8,7 @@ VALID_TRANSITIONS = {
     MissionState.EXECUTING: [MissionState.VERIFYING, MissionState.BLOCKED, MissionState.REPLANNING, MissionState.FAILED],
     MissionState.BLOCKED: [MissionState.EXECUTING, MissionState.VERIFYING, MissionState.REPLANNING, MissionState.FAILED],
     MissionState.REPLANNING: [MissionState.EXECUTING, MissionState.FAILED],
-    MissionState.VERIFYING: [MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS, MissionState.FAILED],
+    MissionState.VERIFYING: [MissionState.REPLANNING, MissionState.EXECUTING, MissionState.COMPLETED, MissionState.PARTIAL_SUCCESS, MissionState.FAILED],
 }
 
 class InvalidStateTransitionError(Exception):
