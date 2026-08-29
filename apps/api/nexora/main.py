@@ -170,10 +170,10 @@ async def resolved_config():
                    bool(_agent_engine_id())))
     badges.append(("Memory", "Memory Bank" if memory_bank_available() else "vector (local)", True))
     badges.append(("Research", "Gemini + Google Search", os.getenv("NEXORA_GROUNDED_RESEARCH", "1") == "1"))
-    badges.append(("State", "Firestore" if os.getenv("NEXORA_REPO") == "firestore" else "in-memory",
-                   os.getenv("NEXORA_REPO") == "firestore"))
-    badges.append(("Dispatch", "Cloud Tasks" if os.getenv("NEXORA_DISPATCHER") == "cloud" else "asyncio",
-                   os.getenv("NEXORA_DISPATCHER") == "cloud"))
+    badges.append(("State", "Firestore" if os.getenv("NEXORA_REPO") == "firestore"
+                   else "in-process", True))
+    badges.append(("Dispatch", "Cloud Tasks" if os.getenv("NEXORA_DISPATCHER") == "cloud"
+                   else "in-process graph", True))
     badges.append(("Media", "Veo / Lyria / Imagen / TTS", True))
     return {
         "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
