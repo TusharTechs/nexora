@@ -194,6 +194,26 @@ class WorkflowTemplate(BaseModel):
     trigger: str = "manual"
     created_at: datetime = Field(default_factory=utcnow)
 
+class MissionSchedule(BaseModel):
+    """A standing instruction that spawns missions over time (ADR-069).
+
+    `cadence` is one of: 'once' (at `next_run`), 'daily', 'weekdays', 'weekly',
+    'monthly'. The scheduler advances `next_run` after each fire.
+    """
+    schedule_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    goal: str
+    cadence: Literal["once", "daily", "weekdays", "weekly", "monthly"] = "once"
+    hour_utc: int = 8
+    minute_utc: int = 0
+    execution_mode: ExecutionMode = ExecutionMode.MOCK
+    next_run: datetime = Field(default_factory=utcnow)
+    active: bool = True
+    last_run: Optional[datetime] = None
+    run_count: int = 0
+    spawned_mission_ids: List[str] = []
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Mission(BaseModel):
     mission_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     goal: str

@@ -14,7 +14,7 @@ SA="nexora-api@${PROJECT_ID}.iam.gserviceaccount.com"
 
 echo "==> Enabling APIs"
 gcloud services enable run.googleapis.com cloudtasks.googleapis.com \
-  firestore.googleapis.com aiplatform.googleapis.com \
+  cloudscheduler.googleapis.com firestore.googleapis.com aiplatform.googleapis.com \
   artifactregistry.googleapis.com secretmanager.googleapis.com \
   cloudbuild.googleapis.com --project "$PROJECT_ID"
 
@@ -59,6 +59,14 @@ URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PRO
 echo "==> Wiring NEXORA_WORKER_URL=$URL"
 gcloud run services update nexora-api --region "$REGION" --project "$PROJECT_ID" \
   --update-env-vars "NEXORA_WORKER_URL=${URL}"
+
+echo "==> Cloud Scheduler: fire due mission schedules every minute"
+gcloud scheduler jobs create http nexora-run-due --location="$REGION" --project "$PROJECT_ID" \
+  --schedule="* * * * *" --uri="${URL}/internal/run_due" --http-method=POST \
+  --oidc-service-account-email="$SA" --oidc-token-audience="${URL}" 2>/dev/null || \
+gcloud scheduler jobs update http nexora-run-due --location="$REGION" --project "$PROJECT_ID" \
+  --schedule="* * * * *" --uri="${URL}/internal/run_due" --http-method=POST \
+  --oidc-service-account-email="$SA" --oidc-token-audience="${URL}"
 
 echo
 echo "NEXORA API is live: $URL"

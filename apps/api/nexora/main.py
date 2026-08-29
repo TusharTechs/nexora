@@ -12,7 +12,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from packages.core.models import (Mission, MissionState, ExecutionMode, MissionIntent,
-                                  MissionNode, MemoryEntry, MemoryType, MemoryScope)
+                                  MissionNode, MemoryEntry, MemoryType, MemoryScope,
+                                  MissionSchedule)
+from nexora.core.scheduler import MissionScheduler, first_run_for
 from nexora.core.repository import build_repository
 from nexora.core.state_machine import MissionStateMachine, InvalidStateTransitionError
 from nexora.core.capability_network import     CapabilityNetwork
@@ -55,6 +57,7 @@ firewall = ContentFirewall()
 audit = AuditTrail()
 memory = InMemoryMemoryStore()
 forge = WorkflowForge(network)
+scheduler = MissionScheduler()
 
 def build_registry(mode: ExecutionMode) -> ProviderRegistry:
     if mode == ExecutionMode.LIVE:
@@ -104,10 +107,76 @@ async def healthz():
             "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
 
 
+async def _spawn_scheduled(goal: str, execution_mode: ExecutionMode) -> str:
+    """Scheduler entry point — create a mission from a standing instruction."""
+    mission = await create_mission(GoalRequest(goal=goal, execution_mode=execution_mode))
+    return mission.mission_id
+
+
 @app.on_event("startup")
 async def _startup():
     audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
                             title="api.started", detail="NEXORA API started."))
+    # Local dev / single-instance: run the scheduler in-process. In production
+    # Cloud Scheduler pings /internal/run_due every minute instead.
+    if os.getenv("NEXORA_SCHEDULER_LOOP", "1") == "1" and os.getenv("NEXORA_DISPATCHER") != "cloud":
+        scheduler.start_loop(_spawn_scheduled)
+
+
+class ScheduleRequest(BaseModel):
+    goal: str
+    cadence: str = "once"
+    hour_utc: int = 8
+    minute_utc: int = 0
+    execution_mode: ExecutionMode = ExecutionMode.MOCK
+    start_in_minutes: Optional[int] = None   # for 'once': run N minutes from now
+
+
+@app.post("/api/v1/schedules")
+async def create_schedule(req: ScheduleRequest):
+    from packages.core.models import utcnow
+    from datetime import timedelta
+    if req.start_in_minutes is not None:
+        next_run = utcnow() + timedelta(minutes=max(0, req.start_in_minutes))
+    else:
+        next_run = first_run_for(req.cadence, req.hour_utc, req.minute_utc)
+    sched = MissionSchedule(goal=req.goal, cadence=req.cadence, hour_utc=req.hour_utc,
+                            minute_utc=req.minute_utc, execution_mode=req.execution_mode,
+                            next_run=next_run)
+    scheduler.add(sched)
+    audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
+                            title="schedule_created",
+                            detail=f"{req.cadence}: {req.goal[:80]}"))
+    return sched.model_dump(mode="json")
+
+
+@app.get("/api/v1/schedules")
+async def list_schedules():
+    return [s.model_dump(mode="json") for s in scheduler.list()]
+
+
+@app.delete("/api/v1/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str):
+    if not scheduler.remove(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"deleted": schedule_id}
+
+
+@app.post("/api/v1/schedules/{schedule_id}/run")
+async def run_schedule_now(schedule_id: str):
+    sched = scheduler.get(schedule_id)
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    mid = await _spawn_scheduled(sched.goal, sched.execution_mode)
+    scheduler.mark_fired(sched, mid)
+    return {"schedule_id": schedule_id, "mission_id": mid}
+
+
+@app.post("/internal/run_due")
+async def run_due_schedules():
+    """Pinged by Cloud Scheduler every minute in production."""
+    spawned = await scheduler.run_due(_spawn_scheduled)
+    return {"spawned": spawned, "count": len(spawned)}
 
 
 # ---------------- Missions ----------------
@@ -191,7 +260,7 @@ async def execute_node_internal(ref: NodeRef):
 @app.post("/internal/reset")
 async def reset_all_state():
     if hasattr(repo, "clear"): repo.clear()
-    audit.clear(); memory.clear(); bus.clear(); forge.clear()
+    audit.clear(); memory.clear(); bus.clear(); forge.clear(); scheduler.clear()
     if hasattr(registry.provider, "reset_seed"): registry.provider.reset_seed()
     return {"status": "reset"}
 

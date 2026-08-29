@@ -31,6 +31,7 @@ resource "google_project_service" "svc" {
   for_each = toset([
     "run.googleapis.com",
     "cloudtasks.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "firestore.googleapis.com",
     "aiplatform.googleapis.com",
     "artifactregistry.googleapis.com",
@@ -152,6 +153,23 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
+    }
+  }
+  depends_on = [google_project_service.svc]
+}
+
+# ---------------- Scheduled missions: Cloud Scheduler ----------------
+resource "google_cloud_scheduler_job" "run_due" {
+  name      = "nexora-run-due-schedules"
+  region    = var.region
+  schedule  = "* * * * *" # every minute
+  time_zone = "Etc/UTC"
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.api.uri}/internal/run_due"
+    oidc_token {
+      service_account_email = google_service_account.api.email
+      audience              = google_cloud_run_v2_service.api.uri
     }
   }
   depends_on = [google_project_service.svc]
