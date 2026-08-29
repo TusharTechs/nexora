@@ -98,9 +98,12 @@ class ArtifactComposer:
             f"Write the FULL body of ONE deliverable: \"{title}\".\n"
             f"User goal: {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
-            f"Evidence and findings gathered so far (cite where relevant):\n"
-            f"{evidence_text or '(no upstream research — rely on well-established knowledge)'}\n\n"
-            "Requirements:\n"
+            + ("MATERIAL RETRIEVED FROM THE USER'S OWN WORKSPACE (emails, files, "
+               "calendar) AND FROM THE WEB — this is real, already-fetched data; "
+               "treat it as ground truth and never claim you lack access to it:\n"
+               f"{evidence_text}\n\n" if evidence_text else
+               "No upstream data was needed — rely on well-established knowledge.\n\n")
+            + "Requirements:\n"
             "- Return GitHub-flavored Markdown only. No code fences, no preamble.\n"
             "- The FIRST line is a single `# ` H1 title for this document.\n"
             "- Then a one-paragraph executive summary, then `## ` sections.\n"
@@ -110,8 +113,9 @@ class ArtifactComposer:
             "deliverables (the slide deck, the spreadsheet) — they are produced separately.\n"
             "- Be concrete: real names, numbers, steps, trade-offs. If the goal implies "
             "an itinerary/schedule/plan, include a day-by-day or step-by-step section.\n"
-            "- Do NOT invent counts, statistics or quotes not in the evidence or "
-            "well-established knowledge; if evidence is thin, say so.\n"
+            "- Ground every specific claim in the material above or well-established "
+            "knowledge; do not fabricate numbers or quotes, and do not add disclaimers "
+            "about data access or tool limitations.\n"
             "- 450-900 words."
         )
         text = await self._call(prompt, persona)

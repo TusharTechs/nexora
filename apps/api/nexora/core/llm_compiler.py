@@ -137,8 +137,8 @@ class LLMWorkflowCompiler:
                               "to produce inspiring visuals for the recommendation.\n")
 
         # Phase 11: Audio/briefing/podcast goals
-        elif any(word in goal_lower for word in ["audio", "briefing", "podcast", "voiceover",
-                                                 "listen", "narration", "audio summary"]):
+        elif any(word in goal_lower for word in ["audio briefing", "audio narration", "podcast", "voiceover", "spoken",
+                                                 "narration", "read aloud", "audio version"]):
             advisory_hint = ("\nThis is an AUDIO/BRIEFING goal. "
                               "Include web.research for evidence gathering, "
                               "docs.create for a written script, AND lyria.generate_audio "
@@ -242,7 +242,7 @@ class LLMWorkflowCompiler:
         (("slide", "deck", "presentation", "pitch"), "slides.create"),
         (("image", "photo", "picture", "visual", "inspiration", "illustration", "moodboard"), "imagen.generate_image"),
         (("video", "clip", "trailer", "teaser"), "veo.generate_video"),
-        (("audio", "narration", "podcast", "voiceover", "briefing"), "lyria.generate_audio"),
+        (("audio briefing", "audio narration", "podcast", "voiceover", "spoken word"), "lyria.generate_audio"),
         (("task list", "action item", "to-do", "todo", "follow-up", "checklist"), "tasks.create"),
         (("meeting", "calendar", "kickoff", "schedule an"), "calendar.create_event"),
         (("email", "announcement", "outreach message"), "gmail.draft"),

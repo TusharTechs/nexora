@@ -63,7 +63,7 @@ class MissionSupervisor:
                 sv = SemanticVerifier()
                 mission.semantic_verification = await sv.verify(
                     mission.outcome_contract, mission.artifacts,
-                    mission.evidence, mission.receipts)
+                    mission.evidence, mission.receipts, nodes=mission.nodes)
 
                 # Phase 5: Adaptive replan if outcome incomplete.
                 # replan_count (<2) is the loop bound; adaptive_replan_pending is

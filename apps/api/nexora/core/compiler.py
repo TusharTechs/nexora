@@ -18,7 +18,7 @@ KEYWORD_RULES: List[Tuple[Tuple[str, ...], str]] = [
     (("survey", "questionnaire"), "forms.create"),
     (("people", "contacts", "stakeholder"), "people.search"),
     (("video",), "veo.generate_video"),
-    (("audio", "briefing"), "lyria.generate_audio"),
+    (("audio briefing", "audio narration", "podcast", "voiceover"), "lyria.generate_audio"),
     # Phase 10: Image generation for visual/travel/creative goals
     (("photo", "picture", "visual", "illustration", "island", "beach",
       "travel", "vacation", "destination", "trip"), "imagen.generate_image"),

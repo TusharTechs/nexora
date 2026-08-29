@@ -77,8 +77,12 @@ Return ONLY valid JSON matching this schema:
 }}
 
 Rules:
-- Be strict: if a deliverable is genuinely incomplete, say PARTIAL, not SATISFIED.
-- recommended_next_actions should be concrete (e.g. "Research 2 more competitors").
+- Judge from the PRODUCED CONTENT excerpts below — that is what the artifact
+  contains. A real file was created for every artifact listed; do not mark a
+  deliverable PARTIAL merely because you cannot open the live file yourself.
+- Be strict about substance: PARTIAL only if the produced content genuinely
+  misses part of the deliverable's success criteria.
+- recommended_next_actions should be concrete (e.g. "Add a risks section").
 - Keep reasons concise (one sentence).
 """
 
@@ -94,7 +98,7 @@ class SemanticVerifier:
         self.call_fn = call_fn
 
     async def verify(self, contract, artifacts: List, evidence: List,
-                     receipts: List) -> SemanticVerificationReport:
+                     receipts: List, nodes: Optional[List] = None) -> SemanticVerificationReport:
         """Run semantic verification. Never raises — degrades to structural fallback."""
         try:
             from nexora.core.llm_client import llm_available
@@ -102,6 +106,7 @@ class SemanticVerifier:
                 return self._structural_fallback(contract, artifacts)
 
             summary = self._build_artifacts_summary(artifacts, receipts)
+            summary += self._build_content_digest(nodes)
             ev_summary = self._build_evidence_summary(evidence)
             contract_json = self._serialize_contract(contract)
 
@@ -178,6 +183,26 @@ class SemanticVerifier:
             rationale = getattr(receipt, "reason", "") if receipt else ""
             lines.append(f"- {title} ({getattr(a, 'artifact_id', '?')[:8]}): {rationale or uri}")
         return "\n".join(lines)
+
+    def _build_content_digest(self, nodes) -> str:
+        """What each synthesis node actually produced — so the auditor judges the
+        content, not just the fact that a file exists."""
+        if not nodes:
+            return ""
+        lines = []
+        for n in nodes:
+            outs = getattr(n, "outputs", {}) or {}
+            cap = getattr(n, "capability_id", "")
+            if outs.get("content_preview"):
+                lines.append(f"- {cap} produced (~{outs.get('content_chars', '?')} chars): "
+                             f"{str(outs['content_preview'])[:500]}")
+            elif outs.get("sheet_rows"):
+                rows = outs["sheet_rows"]
+                lines.append(f"- {cap} produced a spreadsheet with {len(rows)} data rows, "
+                             f"e.g. {rows[:3]}")
+            elif outs.get("slide_count"):
+                lines.append(f"- {cap} produced a {outs['slide_count']}-slide deck")
+        return ("\n\nPRODUCED CONTENT (excerpts):\n" + "\n".join(lines)) if lines else ""
 
     def _build_evidence_summary(self, evidence) -> str:
         if not evidence:
