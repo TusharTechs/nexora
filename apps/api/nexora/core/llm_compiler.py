@@ -39,10 +39,36 @@ class LLMWorkflowCompiler:
             return None
         nodes = self.parse_plan(text, constitution, intent, attachment,
                                 context_bundle, outcome_contract)
+        nodes = self._dedupe_refinements(nodes)
         # Phase 9 hardening: guarantee a synthesis artifact for summary/report goals
         nodes = self._ensure_synthesis(goal, intent, constitution, attachment, nodes)
         # ADR-066: guarantee every required deliverable maps to a capability
-        return self._ensure_contract_coverage(intent, constitution, outcome_contract, nodes)
+        nodes = self._ensure_contract_coverage(intent, constitution, outcome_contract, nodes)
+        return self._dedupe_refinements(nodes)
+
+    @staticmethod
+    def _dedupe_refinements(nodes):
+        """Drop refinement ops that duplicate a create in the same plan
+        (sheets.write after sheets.create, docs.update after docs.create with no
+        distinct target)."""
+        if not nodes:
+            return nodes
+        caps = {n.capability_id for n in nodes}
+        drop = set()
+        if "sheets.create" in caps and "sheets.write" in caps:
+            drop.add("sheets.write")
+        if "docs.create" in caps and "docs.update" in caps:
+            drop.add("docs.update")
+        if not drop:
+            return nodes
+        kept_ids = {n.node_id for n in nodes if n.capability_id not in drop}
+        out = []
+        for n in nodes:
+            if n.capability_id in drop:
+                continue
+            n.depends_on = [d for d in n.depends_on if d in kept_ids]
+            out.append(n)
+        return out
 
     async def _call(self, prompt: str) -> str:
         if self.call_fn:

@@ -195,6 +195,28 @@ class ArtifactComposer:
         ]
         return {"headers": hdrs, "rows": rows, "notes": "Fallback estimate — LLM unavailable."}
 
+    # ---------------- email ----------------
+    async def compose_email(self, *, objective: str, purpose: str = "",
+                            persona: Optional[Persona | str] = None,
+                            contract=None, evidence_text: str = "") -> Dict[str, str]:
+        prompt = (
+            f"{self._persona_block(persona or 'Coordinator')}\n\n"
+            f"Draft a professional email that advances this goal:\n{objective}\n"
+            + (f"Specific purpose of this email: {purpose}\n" if purpose else "")
+            + f"\nContext / findings:\n{evidence_text or '(rely on the goal)'}\n\n"
+            "Return ONLY JSON: {\"subject\": \"...\", \"body_markdown\": \"...\"}.\n"
+            "Rules: subject under 80 chars; body is tight Markdown with a greeting, "
+            "2-4 short paragraphs or a short bullet list, and a clear ask or next step; "
+            "no placeholders like [Name] unless truly unknown; sign off as 'NEXORA'."
+        )
+        data = _extract_json(await self._call(prompt) or "")
+        if isinstance(data, dict) and data.get("body_markdown"):
+            return {"subject": str(data.get("subject") or objective)[:120],
+                    "body_markdown": str(data["body_markdown"])}
+        return {"subject": (purpose or objective)[:120],
+                "body_markdown": (f"Hi,\n\n{evidence_text or objective}\n\n"
+                                  "Best,\nNEXORA")}
+
     # ---------------- media prompts ----------------
     async def compose_media_prompt(self, *, kind: str, objective: str,
                                    evidence_text: str = "") -> str:

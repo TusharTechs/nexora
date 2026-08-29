@@ -25,6 +25,27 @@ class NodeExecutor:
         self.composer = composer or ArtifactComposer()
 
     @staticmethod
+    def _clean_title(raw: str, mission, node) -> str:
+        """Turn auto-generated titles ('Report - <goal>', 'Summary - <goal>') into
+        a clean deliverable name using the contract's one-line objective."""
+        raw = (raw or "").strip()
+        junky = (not raw or raw in ("Document", "Doc", "Report", "Summary")
+                 or raw.startswith(("Report - ", "Summary - ", "Doc - ", "Tracker - ")))
+        if not junky and len(raw) <= 90:
+            return raw
+        obj = ""
+        oc = getattr(mission, "outcome_contract", None) if mission else None
+        if oc is not None:
+            obj = getattr(oc, "objective", "") or (oc.get("objective", "") if isinstance(oc, dict) else "")
+        obj = obj or (mission.intent.objective if mission and mission.intent else "") or raw
+        obj = obj.strip().rstrip(".")
+        # Prefer a noun phrase: drop leading "I want to / help me / please"
+        for lead in ("i want to ", "i am going to ", "help me ", "please ", "can you "):
+            if obj.lower().startswith(lead):
+                obj = obj[len(lead):]
+        return (obj[:1].upper() + obj[1:])[:90] or "Deliverable"
+
+    @staticmethod
     def _objective(mission, node) -> str:
         if mission and getattr(mission, "intent", None) and mission.intent.objective:
             return mission.intent.objective
@@ -143,7 +164,7 @@ class NodeExecutor:
             # ADR-066: Gemini writes the real document body from the persona,
             # the Outcome Contract, and upstream research evidence.
             evidence_text = self._summarize_upstream(mission, node)
-            title = node.inputs.get("title", "Document")
+            title = self._clean_title(node.inputs.get("title", "Document"), mission, node)
             content = await self.composer.compose_document(
                 title=title, objective=self._objective(mission, node),
                 persona=persona_for_capability("docs.create"),
@@ -204,10 +225,24 @@ class NodeExecutor:
                     node.outputs["email_firewall"] = {"verdict": "CLEAN", "quarantined": False}
                     node.firewall_summary = f"Read failed gracefully: {e}"
 
-        elif node.capability_id == "gmail.send":
-            artifact = await provider.send_email(node.inputs.get("to", []), node.inputs.get("subject", ""), node.inputs.get("body", ""))
-        elif node.capability_id == "gmail.draft":
-            artifact = await provider.draft_email(node.inputs.get("to", []), node.inputs.get("subject", ""), node.inputs.get("body", ""))
+        elif node.capability_id in ("gmail.send", "gmail.draft"):
+            body = node.inputs.get("body", "")
+            subject = node.inputs.get("subject", "")
+            if not body or body in ("Status update...", ""):
+                composed = await self.composer.compose_email(
+                    objective=self._objective(mission, node),
+                    purpose=node.inputs.get("purpose", subject),
+                    persona=persona_for_capability("gmail.send"),
+                    contract=getattr(mission, "outcome_contract", None) if mission else None,
+                    evidence_text=self._summarize_upstream(mission, node))
+                body = composed["body_markdown"]
+                subject = subject or composed["subject"]
+                node.inputs["body"], node.inputs["subject"] = body, subject
+            to = node.inputs.get("to", [])
+            if node.capability_id == "gmail.send":
+                artifact = await provider.send_email(to, subject, body)
+            else:
+                artifact = await provider.draft_email(to, subject, body)
         elif node.capability_id == "drive.search":
             node.outputs["search_results"] = await provider.search_files(node.inputs.get("query", ""))
         elif node.capability_id == "drive.read":
@@ -249,7 +284,7 @@ class NodeExecutor:
             node.outputs["events"] = []
             node.outputs["available"] = True
         elif node.capability_id == "sheets.create":
-            title = node.inputs.get("title", "Spreadsheet")
+            title = self._clean_title(node.inputs.get("title", "Spreadsheet"), mission, node)
             composed = await self.composer.compose_sheet(
                 title=title, objective=self._objective(mission, node),
                 persona=persona_for_capability("sheets.create"),
@@ -266,7 +301,7 @@ class NodeExecutor:
         elif node.capability_id == "tasks.create":
             artifact = await provider.create_task(mission_id, node.node_id, node.inputs.get("title", "Task"), node.inputs.get("notes", ""))
         elif node.capability_id == "slides.create":
-            title = node.inputs.get("title", "Presentation")
+            title = self._clean_title(node.inputs.get("title", "Presentation"), mission, node)
             deck = await self.composer.compose_slides(
                 title=title, objective=self._objective(mission, node),
                 persona=persona_for_capability("slides.create"),

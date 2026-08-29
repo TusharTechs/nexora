@@ -67,7 +67,11 @@ Rules:
 - If the goal requires information outside the user's own files (market data, competitors, external facts), set needs_external_research to true.
 - For travel, recommendation, or creative goals, include a visual deliverable (e.g. "inspiration images").
 - Do NOT include tool names (no "google docs", no "veo"). Describe outcomes, not tools.
-- Keep it concise: 3-8 deliverables, 3-6 success criteria, 2-5 evidence items.
+- SCOPE THE AMBITION TO THE GOAL. If the user says "short", "quick", "brief",
+  "just", or asks for a single thing, return exactly 1-2 deliverables. Only a
+  goal that explicitly asks to "prepare everything" / lists multiple artifacts
+  should get 4+ deliverables. Never pad.
+- Keep it concise: 1-6 deliverables, 2-5 success criteria, 1-4 evidence items.
 """
 
 

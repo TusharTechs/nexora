@@ -59,7 +59,10 @@ class LLMClient:
         self.backend = backend if backend is not None else os.getenv("NEXORA_LLM_BACKEND", "auto")
         self.gemini_key = gemini_key if gemini_key is not None else os.getenv("GEMINI_API_KEY", "")
         self.project = project if project is not None else os.getenv("GCP_PROJECT_ID", "")
-        self.location = location if location is not None else os.getenv("GCP_LOCATION", "us-central1")
+        # Gemini text models on Vertex are served from the "global" endpoint;
+        # regional media endpoints (Imagen/Veo/Lyria) use GCP_LOCATION separately.
+        self.location = location if location is not None else \
+            os.getenv("GCP_GENAI_LOCATION", "global")
         self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
         self.call_fn = call_fn
         self.http_fn = http_fn
@@ -124,7 +127,9 @@ class LLMClient:
             except ImportError:
                 pass
         token = await self._vertex_token()
-        url = (f"https://{self.location}-aiplatform.googleapis.com/v1/"
+        host = ("aiplatform.googleapis.com" if self.location == "global"
+                else f"{self.location}-aiplatform.googleapis.com")
+        url = (f"https://{host}/v1/"
                f"projects/{self.project}/locations/{self.location}/"
                f"publishers/google/models/{m}:generateContent")
         headers = {"Authorization": f"Bearer {token}"}
@@ -205,3 +210,25 @@ def reset_default_client():
 async def llm_generate(prompt: str, temperature: float = 0.2,
                        model: Optional[str] = None) -> str:
     return await get_default_client().generate(prompt, temperature, model)
+
+
+def genai_client():
+    """A configured google-genai Client, Vertex-first when a project is set.
+
+    Used by call sites that need SDK features beyond plain text generation
+    (Google Search grounding, image generation, multimodal parts).
+    """
+    from google import genai
+    backend = os.getenv("NEXORA_LLM_BACKEND", "auto")
+    project = os.getenv("GCP_PROJECT_ID", "")
+    key = os.getenv("GEMINI_API_KEY", "")
+    use_vertex = backend == "vertex" or (backend == "auto" and project and not key)
+    if use_vertex and project:
+        return genai.Client(vertexai=True, project=project,
+                            location=os.getenv("GCP_GENAI_LOCATION", "global"))
+    if key:
+        return genai.Client(api_key=key)
+    if project:
+        return genai.Client(vertexai=True, project=project,
+                            location=os.getenv("GCP_GENAI_LOCATION", "global"))
+    raise LLMUnavailableError("No LLM backend configured.")

@@ -111,9 +111,10 @@ class WebResearchService:
         if self.search_fn:
             return self.search_fn(objective, max_results)
         if not self.api_key:
-            # No Tavily key — use Gemini + Google Search grounding when a Gemini
-            # key is configured (real, cited results; no extra API key needed).
-            if self.gemini_key and os.getenv("NEXORA_GROUNDED_RESEARCH", "1") == "1":
+            # No Tavily key — use Gemini + Google Search grounding when any Gemini
+            # backend (API key or Vertex project) is configured.
+            has_backend = bool(self.gemini_key or os.getenv("GCP_PROJECT_ID", ""))
+            if has_backend and os.getenv("NEXORA_GROUNDED_RESEARCH", "1") == "1":
                 grounded = await self._grounded_search(objective, max_results)
                 if grounded:
                     return grounded
@@ -145,12 +146,12 @@ class WebResearchService:
     async def _grounded_search(self, objective: str, max_results: int) -> List[Dict]:
         """Real web results via Gemini + Google Search grounding (google-genai SDK)."""
         try:
-            from google import genai
             from google.genai import types
+            from nexora.core.llm_client import genai_client
         except ImportError:
             return []
         try:
-            client = genai.Client(api_key=self.gemini_key)
+            client = genai_client()
             resp = await client.aio.models.generate_content(
                 model=self.model,
                 contents=(f"Research this and report the key facts with concrete numbers, "

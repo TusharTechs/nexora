@@ -163,29 +163,43 @@ class LiveWorkspaceProvider:
 
         return await asyncio.to_thread(_search)
 
+    @staticmethod
+    def _mime_email(to: List[str], subject: str, body_markdown: str) -> str:
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from nexora.providers.formatting import markdown_to_html, parse_markdown_blocks
+        plain_lines = [b.get("text", "") for b in parse_markdown_blocks(body_markdown)]
+        msg = MIMEMultipart("alternative")
+        msg["To"] = ", ".join(to) if to else ""
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body_markdown, "plain", "utf-8"))
+        msg.attach(MIMEText(markdown_to_html(body_markdown, title=subject,
+                                             preheader=(plain_lines[0] if plain_lines else subject)),
+                            "html", "utf-8"))
+        return base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
     async def send_email(self, to: List[str], subject: str, body: str) -> Artifact:
         service = await self._build_service('gmail', 'v1')
+        raw = self._mime_email(to, subject, body)
 
         def _send():
-            message = f"To: {','.join(to)}\nSubject: {subject}\n\n{body}"
-            raw = base64.urlsafe_b64encode(message.encode('utf-8')).decode('utf-8')
-            res = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-            return res['id']
+            return service.users().messages().send(userId='me', body={'raw': raw}).execute()['id']
 
         msg_id = await asyncio.to_thread(_send)
-        return self._art("EMAIL", msg_id, f"https://mail.google.com/mail/u/0/#inbox/{msg_id}", to=to, subject=subject)
+        return self._art("EMAIL", msg_id, f"https://mail.google.com/mail/u/0/#sent/{msg_id}",
+                         to=to, subject=subject)
 
     async def draft_email(self, to: List[str], subject: str, body: str) -> Artifact:
         service = await self._build_service('gmail', 'v1')
+        raw = self._mime_email(to, subject, body)
 
         def _draft():
-            message = f"To: {','.join(to)}\nSubject: {subject}\n\n{body}"
-            raw = base64.urlsafe_b64encode(message.encode('utf-8')).decode('utf-8')
-            res = service.users().drafts().create(userId='me', body={'message': {'raw': raw}}).execute()
-            return res['id']
+            return service.users().drafts().create(
+                userId='me', body={'message': {'raw': raw}}).execute()['id']
 
         draft_id = await asyncio.to_thread(_draft)
-        return self._art("DRAFT", draft_id, "https://mail.google.com/mail/u/0/#drafts", to=to, subject=subject)
+        return self._art("DRAFT", draft_id, "https://mail.google.com/mail/u/0/#drafts",
+                         to=to, subject=subject)
 
     # ---------------- Google Drive ----------------
     async def search_files(self, query: str) -> List[Dict]:
@@ -232,13 +246,21 @@ class LiveWorkspaceProvider:
         drive_service = await self._build_service('drive', 'v3')
 
         def _create():
+            from nexora.providers.formatting import markdown_to_docs_requests
             doc = service.documents().create(body={'title': title}).execute()
             doc_id = doc['documentId']
 
-            # Insert content
             if content:
-                requests = [{'insertText': {'location': {'index': 1}, 'text': content}}]
-                service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
+                try:
+                    requests = markdown_to_docs_requests(content, title)
+                except Exception:
+                    requests = [{'insertText': {'location': {'index': 1},
+                                                'text': f"{title}\n\n{content}"}}]
+                # Docs batchUpdate caps ranges; send in chunks to stay safe.
+                for i in range(0, len(requests), 400):
+                    service.documents().batchUpdate(
+                        documentId=doc_id,
+                        body={'requests': requests[i:i + 400]}).execute()
 
             # Move to mission folder if we have one
             if self._folder_id and self._folder_id != "root":
@@ -277,15 +299,17 @@ class LiveWorkspaceProvider:
                     valueInputOption="USER_ENTERED",
                     body={"values": values}
                 ).execute()
-                # Bold the header row
                 try:
-                    service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": [
-                        {"repeatCell": {
-                            "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1},
-                            "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
-                            "fields": "userEnteredFormat.textFormat.bold"}}]}).execute()
-                except Exception:
-                    pass
+                    from nexora.providers.formatting import (sheet_format_requests,
+                                                             guess_money_columns)
+                    grid_id = sheet["sheets"][0]["properties"]["sheetId"]
+                    reqs = sheet_format_requests(
+                        grid_id, n_cols=len(values[0]), n_rows=len(values),
+                        money_cols=guess_money_columns([str(h) for h in (headers or [])]))
+                    service.spreadsheets().batchUpdate(
+                        spreadsheetId=sheet_id, body={"requests": reqs}).execute()
+                except Exception as e:
+                    print(f"Sheet formatting skipped: {e}")
 
             if self._folder_id and self._folder_id != "root":
                 file = drive_service.files().get(fileId=sheet_id, fields='parents').execute()
@@ -326,45 +350,32 @@ class LiveWorkspaceProvider:
         return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
                         type="EVENT", provider="live", resource_id=event_id, uri=uri)
 
-    # ---------------- Phase 10: Vertex Imagen Image Generation ----------------
+    # ---------------- Image generation (Gemini / Imagen via GenAI SDK) ----------------
     async def generate_image(self, mission_id: str, node_id: str, prompt: str) -> Artifact:
-        """Generate a real image via Vertex Imagen and upload it to the mission Drive folder.
+        """Generate a real image and upload it to the mission Drive folder.
 
-        Uses ~$0.04 per image (vs $0.30-0.50/sec for Veo videos).
-        Model is configurable via NEXORA_IMAGE_MODEL env var.
+        Uses the GenAI SDK with an image-capable model (NEXORA_IMAGE_MODEL,
+        default gemini-2.5-flash-image) — works on both the Gemini API and Vertex.
         """
-        creds = await self._get_credentials()
-        loc = os.getenv("GCP_LOCATION", "us-central1")
-        proj = os.getenv("GCP_PROJECT_ID", "")
-        model = os.getenv("NEXORA_IMAGE_MODEL", "imagen-3.0-generate-002")
-
-        # Imagen 3 uses a slightly different endpoint than Gemini
-        url = (f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/"
-               f"publishers/google/models/{model}:predict")
+        model = os.getenv("NEXORA_IMAGE_MODEL", "gemini-2.5-flash-image")
 
         def _generate() -> bytes:
-            import httpx as _httpx
-            r = _httpx.post(
-                url,
-                headers={"Authorization": f"Bearer {creds.token}"},
-                json={
-                    "instances": [{"prompt": prompt}],
-                    "parameters": {
-                        "sampleCount": 1,
-                        "aspectRatio": "16:9",
-                    }
-                },
-                timeout=90,
-                verify=not _insecure_tls()
-            )
-            r.raise_for_status()
-            return base64.b64decode(r.json()["predictions"][0]["bytesBase64Encoded"])
+            from nexora.core.llm_client import genai_client
+            client = genai_client()
+            resp = client.models.generate_content(
+                model=model,
+                contents=("Generate a single photorealistic, editorial-quality 16:9 image. "
+                          + prompt))
+            for part in resp.candidates[0].content.parts:
+                inline = getattr(part, "inline_data", None)
+                if inline and inline.data:
+                    return inline.data
+            raise RuntimeError("model returned no image part")
 
         try:
             png_bytes = await asyncio.to_thread(_generate)
         except Exception as e:
-            # If Imagen fails (e.g. model 404, quota), fall back to mock image
-            print(f"Vertex Imagen failed: {e}. Falling back to mock image.")
+            print(f"Image generation failed: {e}. Falling back to mock image.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().generate_image(mission_id, node_id, prompt)
 
@@ -421,40 +432,40 @@ class LiveWorkspaceProvider:
         service = await self._build_service('slides', 'v1')
         drive_service = await self._build_service('drive', 'v3')
 
-        # Normalise: accept list[str] or list[{title, bullets}]
+        # Normalise: accept list[str] or list[{title, bullets, notes}]
         deck = []
         for s in (slides or []):
             if isinstance(s, dict):
-                deck.append((str(s.get("title", "")), [str(b) for b in (s.get("bullets") or [])]))
+                deck.append({"title": str(s.get("title", "")),
+                             "bullets": [str(b) for b in (s.get("bullets") or [])]})
             else:
-                deck.append((str(s), []))
+                deck.append({"title": str(s), "bullets": []})
         if not deck:
-            deck = [(title, [])]
+            deck = [{"title": title, "bullets": []}]
 
         def _create():
+            from nexora.providers.formatting import slide_deck_requests, slide_theme_requests
             pres = service.presentations().create(body={'title': title}).execute()
             pres_id = pres['presentationId']
-            # Remove the default first slide, then add ours
-            requests = []
             existing = pres.get('slides', [])
-            for idx, (stitle, bullets) in enumerate(deck):
-                sid = f"slide_{idx}"
-                body_id = f"body_{idx}"
-                requests.append({"createSlide": {
-                    "objectId": sid,
-                    "slideLayoutReference": {"predefinedLayout": "TITLE_AND_BODY"},
-                    "placeholderIdMappings": [
-                        {"layoutPlaceholder": {"type": "TITLE"}, "objectId": f"title_{idx}"},
-                        {"layoutPlaceholder": {"type": "BODY"}, "objectId": body_id},
-                    ]}})
-                requests.append({"insertText": {"objectId": f"title_{idx}", "text": stitle[:180]}})
-                if bullets:
-                    requests.append({"insertText": {"objectId": body_id,
-                                                    "text": "\n".join(f"• {b}" for b in bullets)[:2000]}})
+
+            struct, text_reqs = slide_deck_requests(deck, title, subtitle="Prepared by NEXORA")
             if existing:
-                requests.append({"deleteObject": {"objectId": existing[0]['objectId']}})
+                struct.append({"deleteObject": {"objectId": existing[0]['objectId']}})
             service.presentations().batchUpdate(
-                presentationId=pres_id, body={"requests": requests}).execute()
+                presentationId=pres_id, body={"requests": struct}).execute()
+            if text_reqs:
+                service.presentations().batchUpdate(
+                    presentationId=pres_id, body={"requests": text_reqs}).execute()
+            # Theme pass: recolour titles to the accent
+            try:
+                fresh = service.presentations().get(presentationId=pres_id).execute()
+                theme = slide_theme_requests(fresh)
+                if theme:
+                    service.presentations().batchUpdate(
+                        presentationId=pres_id, body={"requests": theme}).execute()
+            except Exception as e:
+                print(f"Slide theme pass skipped: {e}")
 
             if self._folder_id and self._folder_id != "root":
                 f = drive_service.files().get(fileId=pres_id, fields='parents').execute()
