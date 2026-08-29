@@ -37,15 +37,21 @@ def adk_available() -> bool:
 
 def _configure_genai_env() -> None:
     """Point google-genai (used by ADK) at the same backend NEXORA uses."""
-    if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-        os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
     backend = os.getenv("NEXORA_LLM_BACKEND", "auto")
     project = os.getenv("GCP_PROJECT_ID", "")
-    if project and (backend == "vertex" or (backend == "auto" and not os.getenv("GEMINI_API_KEY"))):
-        os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
-        os.environ.setdefault("GOOGLE_CLOUD_PROJECT", project)
-        os.environ.setdefault("GOOGLE_CLOUD_LOCATION",
-                              os.getenv("GCP_GENAI_LOCATION", "global"))
+    prefer_vertex = bool(project) and (
+        backend == "vertex" or (backend == "auto" and not os.getenv("GEMINI_API_KEY")))
+    if prefer_vertex:
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project
+        os.environ["GOOGLE_CLOUD_LOCATION"] = os.getenv("GCP_GENAI_LOCATION", "global")
+        # A key + USE_VERTEXAI makes google-genai use Vertex "express" mode against
+        # the *key's* project (wrong project, aiplatform often disabled there).
+        # Keep every API key out of google-genai's view on the Vertex path.
+        os.environ.pop("GOOGLE_API_KEY", None)
+        return
+    if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 
 def _model() -> str:

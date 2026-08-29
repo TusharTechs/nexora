@@ -111,12 +111,17 @@ class ArtifactComposer:
             "- NO image syntax, NO markdown links — write URLs/sources as plain text.\n"
             "- Write ONLY this document. Do NOT describe or restate the other "
             "deliverables (the slide deck, the spreadsheet) — they are produced separately.\n"
+            "- Treat every point under 'What success looks like' as a checklist THIS "
+            "document must satisfy on its own. If a point names a count or range "
+            "(e.g. '3 to 5 attractions'), deliver the HIGHER end of that range, and "
+            "give each item every attribute the point asks for (e.g. address, nearest "
+            "transit stop, best time to visit).\n"
             "- Be concrete: real names, numbers, steps, trade-offs. If the goal implies "
             "an itinerary/schedule/plan, include a day-by-day or step-by-step section.\n"
             "- Ground every specific claim in the material above or well-established "
             "knowledge; do not fabricate numbers or quotes, and do not add disclaimers "
             "about data access or tool limitations.\n"
-            "- 450-900 words."
+            "- 600-1200 words."
         )
         text = await self._call(prompt, persona)
         if text and len(text.strip()) > 120:

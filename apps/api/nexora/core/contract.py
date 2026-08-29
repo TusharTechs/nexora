@@ -64,7 +64,12 @@ Rules:
 - Be concrete, not vague.
 - Deliverables should be specific (e.g. "financial model spreadsheet" not "financial analysis").
 - If the goal requires information outside the user's own files (market data, competitors, external facts), set needs_external_research to true.
-- For travel, recommendation, or creative goals, include a visual deliverable (e.g. "inspiration images").
+- For travel, recommendation, or creative goals, include exactly ONE visual
+  deliverable, phrased in the singular and satisfiable by a single generated
+  image (e.g. "a hero inspiration image"). Never ask for "a set", "a series",
+  "a collection", or "images" (plural) — one image is what gets produced.
+- Every success_criterion must be checkable against the deliverables you listed.
+  Do not require a quantity or format the listed deliverables cannot show.
 - Do NOT include tool names (no "google docs", no "veo"). Describe outcomes, not tools.
 - SCOPE THE AMBITION TO THE GOAL. If the user says "short", "quick", "brief",
   "just", or asks for a single thing, return exactly 1-2 deliverables. Only a
@@ -184,7 +189,7 @@ class ContractGenerator:
                 objective=goal,
                 success_criteria=["Research-based recommendations produced", "Written travel/recommendation guide completed", "Inspiring visual imagery generated"],
                 required_deliverables=["Travel or recommendation guide document",
-                                        "Inspiration images (visual imagery of recommended destinations)",
+                                        "A hero inspiration image of a recommended destination",
                                         "Research summary with cited sources"],
                 required_evidence=["Travel reviews and ratings", "Destination information", "Photography references"],
                 constraints=["Use reputable travel sources"],
