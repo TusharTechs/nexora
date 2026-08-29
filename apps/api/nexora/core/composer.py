@@ -20,7 +20,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from nexora.core.personas import Persona, persona_for_capability
+from nexora.core.personas import Persona
 
 
 def _contract_text(contract) -> str:

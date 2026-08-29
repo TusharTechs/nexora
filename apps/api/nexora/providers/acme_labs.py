@@ -4,10 +4,7 @@ Extends MockWorkspaceProvider with realistic seed data: 12 emails across 4 threa
 8 Drive files, a metrics sheet, a people directory, and calendar events. Missions
 must reason over this environment autonomously.
 """
-import asyncio
-import uuid
 from typing import Dict, List
-from packages.core.models import Artifact
 from nexora.providers.mock_workspace import MockWorkspaceProvider
 
 

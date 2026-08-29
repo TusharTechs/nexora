@@ -1,7 +1,6 @@
 """Organizational memory + Teach NEXORA (ADR-043). Deterministic extraction only."""
 import re
-import uuid
-from typing import List, Optional, Protocol
+from typing import List, Protocol
 from packages.core.models import MemoryEntry, MemoryScope, MemoryType
 
 NOUN_CAP = {

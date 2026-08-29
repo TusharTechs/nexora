@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Protocol
+from typing import List, Dict, Protocol
 from packages.core.models import Artifact
 
 class WorkspaceProvider(Protocol):

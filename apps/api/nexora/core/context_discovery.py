@@ -14,9 +14,9 @@ If discovery fails or finds nothing, the mission proceeds with an empty bundle.
 """
 import asyncio
 import re
-from typing import Any, Dict, List, Optional
+from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ContextItem(BaseModel):

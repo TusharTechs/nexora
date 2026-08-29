@@ -8,7 +8,7 @@ calling LLMs.
 The system is purely additive: if persona lookup fails, the node executes with
 whatever default prompt the provider uses. No architectural changes, no new agents.
 """
-from typing import Dict, Optional
+from typing import Dict
 
 
 class Persona:

@@ -15,10 +15,9 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from packages.core.models import MissionIntent, utcnow
+from packages.core.models import MissionIntent
 
 
 class OutcomeContract(BaseModel):

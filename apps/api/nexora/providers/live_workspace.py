@@ -26,7 +26,6 @@ from nexora.core.credential_store import LocalCredentialStore
 
 class LiveProviderConfigError(Exception):
     """Raised when the LiveWorkspaceProvider is missing required configuration."""
-    pass
 
 
 _log = logging.getLogger("nexora.live")
@@ -595,7 +594,6 @@ class LiveWorkspaceProvider:
                 img_bytes = base64.b64decode(raw) if isinstance(raw, str) else raw
             except Exception:
                 img_bytes = None
-        text_hint = attachment.get("text", "")
         try:
             from google.genai import types
             from nexora.core.llm_client import genai_client, llm_available

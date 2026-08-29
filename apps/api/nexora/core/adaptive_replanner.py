@@ -17,10 +17,9 @@ This handles contract-level incompleteness after full execution.
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-import httpx
-from packages.core.models import MissionNode, MissionIntent, MissionConstitution
+from packages.core.models import MissionNode
 from nexora.core.capability_network import CapabilityNetwork
 from nexora.core.policy_engine import PolicyEngine
 from nexora.agents.critic import PlanCritic
