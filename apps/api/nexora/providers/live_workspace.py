@@ -83,6 +83,23 @@ class LiveWorkspaceProvider:
         # build() is synchronous and slow, run in thread
         return await asyncio.to_thread(build, service_name, version, credentials=creds)
 
+    async def _vertex_token(self) -> str:
+        """A cloud-platform-scoped token for direct Vertex REST calls (Veo, Lyria).
+
+        The Workspace OAuth token used for Docs/Drive does NOT carry the Vertex
+        scope, so those calls need Application Default Credentials (the Cloud Run
+        service account in prod, `gcloud auth application-default login` locally).
+        """
+        def _adc() -> str:
+            import google.auth
+            import google.auth.transport.requests
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            if not creds.valid:
+                creds.refresh(google.auth.transport.requests.Request())
+            return creds.token
+        return await asyncio.to_thread(_adc)
+
     def _art(self, atype: str, resource_id: str, uri: str, **extra) -> Artifact:
         return Artifact(
             artifact_id=str(uuid.uuid4()),
@@ -617,10 +634,11 @@ class LiveWorkspaceProvider:
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().create_form(mission_id, node_id, title, questions)
 
-    # ---------------- Vertex Veo ----------------
+    # ---------------- Vertex Veo (GA managed model — no enablement needed,
+    # just aiplatform.googleapis.com + roles/aiplatform.user) ----------------
     async def generate_video(self, mission_id, node_id, prompt):
-        creds = await self._get_credentials()
-        loc = os.getenv("GCP_LOCATION", "us-central1")
+        token = await self._vertex_token()
+        loc = os.getenv("NEXORA_VIDEO_LOCATION", "us-central1")  # Veo: regional
         proj = os.getenv("GCP_PROJECT_ID", "")
         model = os.getenv("NEXORA_VIDEO_MODEL", "veo-3.1-fast-generate-001")
         base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/publishers/google/models/{model}"
@@ -630,22 +648,34 @@ class LiveWorkspaceProvider:
             import httpx as _httpx
             with _httpx.Client(timeout=120, verify=not _insecure_tls()) as c:
                 r = c.post(f"{base}:predictLongRunning",
-                           headers={"Authorization": f"Bearer {creds.token}"},
+                           headers={"Authorization": f"Bearer {token}"},
                            json={"instances": [{"prompt": prompt}],
-                                 "parameters": {"sampleCount": 1, "durationSeconds": 6}})
+                                 "parameters": {"sampleCount": 1, "durationSeconds": 6,
+                                                "resolution": "720p", "generateAudio": True}})
                 r.raise_for_status()
                 op = r.json().get("name")
-                for _ in range(30):
+                for _ in range(36):
                     _t.sleep(10)
                     poll = c.post(f"{base}:fetchPredictOperation",
-                                  headers={"Authorization": f"Bearer {creds.token}"},
+                                  headers={"Authorization": f"Bearer {token}"},
                                   json={"operationName": op})
                     poll.raise_for_status()
                     pj = poll.json()
                     if pj.get("done"):
-                        vids = pj.get("response", {}).get("videos") or pj.get("response", {}).get("predictions", [])
-                        b64 = vids[0].get("bytesBase64Encoded") or vids[0].get("video", {}).get("bytesBase64Encoded")
-                        return base64.b64decode(b64)
+                        if pj.get("error"):
+                            raise RuntimeError(str(pj["error"]))
+                        resp = pj.get("response", {})
+                        vids = resp.get("videos") or resp.get("generatedSamples") or resp.get("predictions", [])
+                        v = vids[0]
+                        b64 = (v.get("bytesBase64Encoded")
+                               or v.get("video", {}).get("bytesBase64Encoded"))
+                        if b64:
+                            return base64.b64decode(b64)
+                        gcs = v.get("gcsUri") or v.get("video", {}).get("uri")
+                        if gcs:
+                            raise RuntimeError(f"Veo returned a GCS URI ({gcs}); "
+                                               "set no storageUri to get bytes back")
+                        raise RuntimeError(f"Veo response had no video bytes: {list(v)}")
                 raise TimeoutError("Veo generation timed out")
 
         try:
@@ -734,15 +764,15 @@ class LiveWorkspaceProvider:
                 from nexora.providers.mock_workspace import MockWorkspaceProvider
                 return await MockWorkspaceProvider().generate_audio(mission_id, node_id, prompt)
         else:
-            creds = await self._get_credentials()
-            loc = os.getenv("GCP_LOCATION", "us-central1")
+            token = await self._vertex_token()
             model = os.getenv("NEXORA_AUDIO_MODEL", "lyria-002")
-            url = (f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/"
+            # Lyria 2 is served only from the global endpoint.
+            url = (f"https://aiplatform.googleapis.com/v1/projects/{proj}/locations/global/"
                    f"publishers/google/models/{model}:predict")
 
             def _lyria() -> tuple:
                 import httpx as _httpx
-                r = _httpx.post(url, headers={"Authorization": f"Bearer {creds.token}"},
+                r = _httpx.post(url, headers={"Authorization": f"Bearer {token}"},
                                 json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
                                 timeout=120, verify=not _insecure_tls())
                 r.raise_for_status()
