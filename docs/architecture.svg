@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 600" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.5}
+      .lbl{fill:#0f172a;font-size:13px;font-weight:700}
+      .sub{fill:#64748b;font-size:10.5px}
+      .grp{fill:#f8fafc;stroke:#e2e8f0;stroke-width:1.5}
+      .grptitle{fill:#334155;font-size:11.5px;font-weight:700;letter-spacing:.09em}
+      .accent{fill:#277668}
+      .accentbox{fill:#ecfdf5;stroke:#277668;stroke-width:1.5}
+      .edge{stroke:#94a3b8;stroke-width:1.6;fill:none;marker-end:url(#arr)}
+      .edge2{stroke:#277668;stroke-width:2;fill:none;marker-end:url(#arrg)}
+      .elabel{fill:#475569;font-size:10px;font-weight:600}
+    </style>
+    <marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#277668"/></marker>
+  </defs>
+
+  <rect width="980" height="600" fill="#ffffff"/>
+  <text x="34" y="40" font-size="22" font-weight="800" fill="#0f172a">NEXORA</text>
+  <text x="132" y="40" font-size="12.5" fill="#64748b">One goal in — a verified workspace of real work out.</text>
+
+  <!-- Client -->
+  <rect class="box" x="34" y="66" width="180" height="66" rx="10"/>
+  <text class="lbl" x="50" y="92">Command Center</text>
+  <text class="sub" x="50" y="110">Next.js · WebSocket + REST</text>
+  <text class="sub" x="50" y="124">voice in · image upload</text>
+
+  <!-- ===================== CLOUD RUN ===================== -->
+  <rect class="grp" x="34" y="158" width="600" height="410" rx="12"/>
+  <text class="grptitle" x="50" y="180">CLOUD RUN — NEXORA API (FastAPI)</text>
+
+  <!-- pipeline column -->
+  <rect class="accentbox" x="52" y="196" width="270" height="48" rx="9"/>
+  <text class="lbl accent" x="66" y="216">1 · Mission Architect</text>
+  <text class="sub" x="66" y="233">Gemini agent — Outcome Contract + plan DAG</text>
+
+  <rect class="accentbox" x="52" y="256" width="270" height="58" rx="9"/>
+  <text class="lbl accent" x="66" y="276">2 · Specialist Workforce</text>
+  <text class="sub" x="66" y="292">6 Gemini agents on ADK — Research, Writer,</text>
+  <text class="sub" x="66" y="306">Finance, Designer, Coordinator, Visual</text>
+
+  <rect class="accentbox" x="52" y="326" width="270" height="48" rx="9"/>
+  <text class="lbl accent" x="66" y="346">3 · QA Auditor</text>
+  <text class="sub" x="66" y="363">Gemini agent — verify deliverables vs contract</text>
+
+  <path class="edge2" d="M187 244 L187 256"/>
+  <path class="edge2" d="M187 314 L187 326"/>
+  <!-- replan loop on the left rail -->
+  <path class="edge2" d="M52 350 C 30 350 30 220 52 220"/>
+  <text class="elabel" x="16" y="283" transform="rotate(-90 16 283)">replan on gap</text>
+
+  <!-- governance column -->
+  <rect class="box" x="352" y="196" width="264" height="178" rx="9"/>
+  <text class="lbl" x="366" y="216">Governance &amp; runtime</text>
+  <text class="sub" x="366" y="235">Content Firewall — injection scan</text>
+  <text class="sub" x="366" y="252">Policy Engine + human approval gate</text>
+  <text class="sub" x="366" y="269">Action Receipts + audit trail</text>
+  <text class="sub" x="366" y="286">State machine · adaptive recovery</text>
+  <text class="sub" x="366" y="303">Composer + Docs/Slides/Sheets render</text>
+  <text class="sub" x="366" y="320">Task dispatch: local | Cloud Tasks</text>
+  <text class="sub" x="366" y="337">Mission Scheduler — standing goals</text>
+  <text class="sub" x="366" y="354">Repositories: memory | Firestore</text>
+
+  <!-- bottom strips -->
+  <rect class="box" x="52" y="392" width="564" height="42" rx="9"/>
+  <text class="lbl" x="66" y="410">Execution modes</text>
+  <text class="sub" x="66" y="425">MOCK (seeded) · LIVE (real Google Workspace via OAuth) · ACME_LABS · REPLAY</text>
+
+  <rect class="box" x="52" y="446" width="564" height="42" rx="9"/>
+  <text class="lbl" x="66" y="464">Reproducible deploy</text>
+  <text class="sub" x="66" y="479">Dockerfile · deploy.sh (one command) · Terraform · 154 hermetic tests</text>
+
+  <rect class="box" x="52" y="500" width="564" height="42" rx="9"/>
+  <text class="lbl" x="66" y="518">Delivery</text>
+  <text class="sub" x="66" y="533">every artifact filed into one Mission Workspace Drive folder</text>
+
+  <!-- ===================== GOOGLE CLOUD ===================== -->
+  <rect class="grp" x="668" y="66" width="290" height="502" rx="12"/>
+  <text class="grptitle" x="684" y="88">GOOGLE CLOUD</text>
+
+  <rect class="accentbox" x="684" y="100" width="258" height="80" rx="9"/>
+  <text class="lbl accent" x="698" y="121">Vertex AI — Gemini 3.5</text>
+  <text class="sub" x="698" y="138">Agent Engine: managed Sessions +</text>
+  <text class="sub" x="698" y="153">Memory Bank (vector memory)</text>
+  <text class="sub" x="698" y="168">Imagen · Veo · Lyria · TTS · embeddings</text>
+
+  <rect class="box" x="684" y="192" width="258" height="42" rx="9"/>
+  <text class="lbl" x="698" y="211">Firestore</text>
+  <text class="sub" x="698" y="226">mission + schedule state (durable)</text>
+
+  <rect class="box" x="684" y="246" width="258" height="42" rx="9"/>
+  <text class="lbl" x="698" y="265">Cloud Tasks</text>
+  <text class="sub" x="698" y="280">one retried task per plan node</text>
+
+  <rect class="box" x="684" y="300" width="258" height="42" rx="9"/>
+  <text class="lbl" x="698" y="319">Cloud Scheduler</text>
+  <text class="sub" x="698" y="334">fires standing goals every minute</text>
+
+  <rect class="box" x="684" y="354" width="258" height="56" rx="9"/>
+  <text class="lbl" x="698" y="374">Workspace APIs</text>
+  <text class="sub" x="698" y="390">Docs · Sheets · Slides · Gmail ·</text>
+  <text class="sub" x="698" y="403">Calendar · Tasks · Drive</text>
+
+  <rect class="box" x="684" y="422" width="258" height="42" rx="9"/>
+  <text class="lbl" x="698" y="441">Secret Manager</text>
+  <text class="sub" x="698" y="456">keys off the request path</text>
+
+  <!-- ===================== EDGES ===================== -->
+  <path class="edge" d="M120 132 L120 158"/>
+  <text class="elabel" x="126" y="150">goal · live updates</text>
+
+  <!-- pipeline -> Vertex (single clean arrow) -->
+  <path class="edge2" d="M322 232 C 500 210 560 150 682 140"/>
+  <text class="elabel" x="470" y="185">every reasoning step =</text>
+  <text class="elabel" x="470" y="197">a Gemini agent</text>
+
+  <!-- governance -> GCP services (single clean arrow) -->
+  <path class="edge" d="M616 300 C 650 300 655 270 682 267"/>
+  <text class="elabel" x="622" y="330">state · tasks ·</text>
+  <text class="elabel" x="622" y="343">schedule · secrets</text>
+
+  <!-- LIVE -> Workspace APIs -->
+  <path class="edge" d="M616 413 C 648 413 660 382 682 382"/>
+  <text class="elabel" x="500" y="405">LIVE → real files</text>
+</svg>

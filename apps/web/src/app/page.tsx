@@ -183,13 +183,25 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-zinc-950 p-6 font-mono text-zinc-100 lg:p-10">
-      <header className="mb-8 text-center">
-        <h1 className="bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-5xl font-black tracking-widest text-transparent">
+      <header className="mb-6 text-center">
+        <h1 className="bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-5xl font-black tracking-widest text-transparent lg:text-6xl">
           NEXORA
         </h1>
-        <p className="mt-2 text-sm text-zinc-400">
-          One goal in. A verified workspace of real work out.
+        <p className="mt-3 text-base text-zinc-300">
+          One goal in. A <span className="text-emerald-400">verified workspace of real work</span> out.
         </p>
+        <p className="mx-auto mt-1 max-w-xl text-xs text-zinc-500">
+          A workforce of Gemini&nbsp;3.5 agents on Google&nbsp;ADK plans the work, does it in the
+          background, checks it against a contract, and files every deliverable into one Drive folder.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+          {["Understand", "Discover", "Plan", "Execute", "Verify"].map((s, i) => (
+            <span key={s} className="flex items-center gap-1.5">
+              {i > 0 && <span className="text-zinc-700">→</span>}
+              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-0.5">{s}</span>
+            </span>
+          ))}
+        </div>
       </header>
 
       <div className="mx-auto max-w-3xl">

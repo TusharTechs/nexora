@@ -6,6 +6,10 @@ decide what is real.
 
 ## One-glance diagram
 
+![NEXORA architecture](architecture.svg)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
     UI[Command Center UI] <-->|goal · live updates| API
@@ -39,6 +43,8 @@ flowchart TB
     WORK -->|LIVE| WSAPI
     API -.-> SM
 ```
+
+</details>
 
 ## Why this stack
 

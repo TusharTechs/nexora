@@ -104,9 +104,31 @@ export default function CommandCenter({ mission, events, onShowDetails }: Props)
   const progress = totalNodes > 0 ? Math.round((doneNodes / totalNodes) * 100) : 0;
 
   if (!mission) {
+    const workforce = [
+      ["Research Analyst", "gathers cited evidence"],
+      ["Writer", "drafts the documents"],
+      ["Financial Analyst", "builds the budgets"],
+      ["Designer", "makes the deck"],
+      ["Coordinator", "schedules & notifies"],
+      ["Visual Designer", "generates imagery"],
+    ];
     return (
-      <div className="flex h-64 items-center justify-center rounded border border-zinc-800 bg-zinc-900/40">
-        <p className="text-sm text-zinc-500">Ready when you are.</p>
+      <div className="space-y-5 rounded-lg border border-zinc-800 bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 p-8">
+        <div className="text-center">
+          <p className="text-sm text-zinc-400">Type a goal above and hit Launch.</p>
+          <p className="mt-1 text-xs text-zinc-600">
+            A Mission Architect writes an Outcome Contract, then this workforce delivers it — and a
+            QA Auditor verifies every piece.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+          {workforce.map(([role, does]) => (
+            <div key={role} className="rounded border border-zinc-800 bg-zinc-900/50 p-3">
+              <p className="text-sm font-bold text-zinc-300">{role}</p>
+              <p className="text-[11px] text-zinc-500">{does}</p>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

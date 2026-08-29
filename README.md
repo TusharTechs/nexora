@@ -18,6 +18,8 @@ high‑value autonomous execution of multi‑step work, not a chat box.
 - **Demo video:** _add your YouTube link here_
 - **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
+![NEXORA architecture](docs/architecture.svg)
+
 ---
 
 ## The friction
