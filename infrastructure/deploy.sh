@@ -114,6 +114,27 @@ else
   AE_ENV=""
 fi
 
+echo "==> Cloud Build permissions"
+# New projects run builds as the Compute Engine default SA, which no longer gets
+# roles/editor automatically — so it can't read the uploaded source tarball
+# ("storage.objects.get denied on ..._cloudbuild/objects/source/...") or push the
+# image. roles/cloudbuild.builds.builder bundles source read + logging + Artifact
+# Registry push.
+bind_member() {  # $1 = member, $2 = role
+  local i
+  for i in 1 2 3 4 5; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+      --member "$1" --role "$2" --condition=None --quiet && return 0
+    echo "    ($2 -> $1) attempt $i failed; retrying in $((i*10))s..."
+    sleep $((i*10))
+  done
+  echo "ERROR: could not bind $2 to $1." >&2
+  exit 1
+}
+CB_SA="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+bind_member "$CB_SA" roles/cloudbuild.builds.builder
+bind_member "$CB_SA" roles/artifactregistry.writer
+
 echo "==> Build image (Cloud Build, from repo root)"
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT_ID" .
 
