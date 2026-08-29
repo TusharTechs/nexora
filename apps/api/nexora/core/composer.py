@@ -61,30 +61,40 @@ class ArtifactComposer:
         self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
 
     # ---------------- transport ----------------
-    async def _call(self, prompt: str) -> Optional[str]:
+    def _persona_parts(self, persona: Optional[Persona | str]) -> tuple[str, str]:
+        """Return (role, instruction) for the persona."""
+        if isinstance(persona, Persona):
+            return persona.role, persona.system_prompt()
+        if isinstance(persona, str) and persona:
+            return persona, f"You are the {persona}. Produce work consistent with that role."
+        return "Specialist", "You are a senior specialist. Produce correct, complete work."
+
+    async def _call(self, task: str, persona: Optional[Persona | str] = None) -> Optional[str]:
+        """Reason about `task` as `persona`. ADK agent first, then Unified LLM
+        Client, then None (caller uses a deterministic fallback)."""
+        role, instruction = self._persona_parts(persona)
         if self.call_fn:
-            return self.call_fn(prompt)
+            return self.call_fn(f"{instruction}\n\n{task}")
+
+        from nexora.core.adk_runtime import try_run_agent
+        adk_text = await try_run_agent(role=role, instruction=instruction, task=task)
+        if adk_text and adk_text.strip():
+            return adk_text
+
         from nexora.core.llm_client import llm_available, llm_generate
         if not llm_available():
             return None
         try:
-            return await llm_generate(prompt, temperature=0.4, model=self.model)
+            return await llm_generate(f"{instruction}\n\n{task}",
+                                      temperature=0.4, model=self.model)
         except Exception:
             return None
-
-    def _persona_block(self, persona: Optional[Persona | str]) -> str:
-        if isinstance(persona, Persona):
-            return persona.system_prompt()
-        if isinstance(persona, str) and persona:
-            return f"You are acting as the {persona}."
-        return "You are a senior specialist."
 
     # ---------------- document ----------------
     async def compose_document(self, *, title: str, objective: str,
                                persona: Optional[Persona | str] = None,
                                contract=None, evidence_text: str = "") -> str:
         prompt = (
-            f"{self._persona_block(persona)}\n\n"
             f"Write the FULL body of a deliverable titled \"{title}\".\n"
             f"User goal: {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
@@ -102,7 +112,7 @@ class ArtifactComposer:
             "say so and work from what is given.\n"
             "- 400-900 words."
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, persona)
         if text and len(text.strip()) > 120:
             return text.strip()
         return self._fallback_document(title, objective, contract, evidence_text)
@@ -125,7 +135,6 @@ class ArtifactComposer:
                              persona: Optional[Persona | str] = None,
                              contract=None, evidence_text: str = "") -> List[Dict[str, Any]]:
         prompt = (
-            f"{self._persona_block(persona)}\n\n"
             f"Design a concise slide deck titled \"{title}\".\n"
             f"User goal: {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
@@ -136,7 +145,7 @@ class ArtifactComposer:
             "3-5 short bullets per slide; concrete details, not filler; "
             "last slide is 'Next steps' with actionable items."
         )
-        data = _extract_json(await self._call(prompt) or "")
+        data = _extract_json(await self._call(prompt, persona) or "")
         slides: List[Dict[str, Any]] = []
         if isinstance(data, list):
             for item in data:
@@ -163,7 +172,6 @@ class ArtifactComposer:
                             contract=None, evidence_text: str = "",
                             headers: Optional[List[str]] = None) -> Dict[str, Any]:
         prompt = (
-            f"{self._persona_block(persona)}\n\n"
             f"Build the data for a spreadsheet titled \"{title}\".\n"
             f"User goal: {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
@@ -174,7 +182,7 @@ class ArtifactComposer:
             "Include a final TOTAL row where it makes sense. Numbers must be plausible "
             "and internally consistent."
         )
-        data = _extract_json(await self._call(prompt) or "")
+        data = _extract_json(await self._call(prompt, persona) or "")
         if isinstance(data, dict) and data.get("headers") and isinstance(data.get("rows"), list):
             hdrs = [str(h) for h in data["headers"]]
             rows = [[("" if c is None else str(c)) for c in r]
@@ -200,7 +208,6 @@ class ArtifactComposer:
                             persona: Optional[Persona | str] = None,
                             contract=None, evidence_text: str = "") -> Dict[str, str]:
         prompt = (
-            f"{self._persona_block(persona or 'Coordinator')}\n\n"
             f"Draft a professional email that advances this goal:\n{objective}\n"
             + (f"Specific purpose of this email: {purpose}\n" if purpose else "")
             + f"\nContext / findings:\n{evidence_text or '(rely on the goal)'}\n\n"
@@ -209,7 +216,7 @@ class ArtifactComposer:
             "2-4 short paragraphs or a short bullet list, and a clear ask or next step; "
             "no placeholders like [Name] unless truly unknown; sign off as 'NEXORA'."
         )
-        data = _extract_json(await self._call(prompt) or "")
+        data = _extract_json(await self._call(prompt, persona or "Coordinator") or "")
         if isinstance(data, dict) and data.get("body_markdown"):
             return {"subject": str(data.get("subject") or objective)[:120],
                     "body_markdown": str(data["body_markdown"])}
@@ -232,7 +239,7 @@ class ArtifactComposer:
             f"Context / findings:\n{evidence_text[:1500]}\n\n"
             "Return ONLY the prompt text itself — vivid, specific, one paragraph, no preamble."
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, "Visual Designer")
         if text and text.strip():
             return text.strip().strip('"')
         if kind == "audio":

@@ -149,6 +149,16 @@ class SemanticVerifier:
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
+        from nexora.core.adk_runtime import try_run_agent
+        adk = await try_run_agent(
+            role="QA Auditor",
+            instruction=("You are NEXORA's QA Auditor — an independent verification "
+                         "agent. You judge, strictly and evidence-based, whether each "
+                         "contract deliverable is SATISFIED, PARTIAL or MISSING. "
+                         "You output only the requested JSON."),
+            task=prompt)
+        if adk and adk.strip():
+            return adk
         from nexora.core.llm_client import llm_generate
         return await llm_generate(prompt, temperature=0.1, model=self.model)
 

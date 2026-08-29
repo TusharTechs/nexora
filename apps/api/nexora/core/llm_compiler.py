@@ -70,9 +70,20 @@ class LLMWorkflowCompiler:
             out.append(n)
         return out
 
+    _ARCHITECT_INSTRUCTION = (
+        "You are NEXORA's Mission Architect — a planning agent. You decompose a "
+        "goal into the minimal ordered set of capability calls that will satisfy "
+        "its Outcome Contract, always putting research/search before synthesis. "
+        "You output only the requested JSON.")
+
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
+        from nexora.core.adk_runtime import try_run_agent
+        adk = await try_run_agent(role="Mission Architect",
+                                  instruction=self._ARCHITECT_INSTRUCTION, task=prompt)
+        if adk and adk.strip():
+            return adk
         from nexora.core.llm_client import llm_generate
         model = self.router.route(ModelTier.T2) or os.getenv("NEXORA_MODEL_DEFAULT", "gemini-3.5-flash")
         return await llm_generate(prompt, temperature=0.2, model=model)

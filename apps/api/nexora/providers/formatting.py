@@ -262,17 +262,21 @@ def slide_deck_requests(deck: List[Dict], title: str, subtitle: str = "") -> Tup
     struct: List[Dict] = []
     text: List[Dict] = []
 
-    # Title slide  (Slides API requires object IDs of length >= 5)
+    # Slide 0 → a real title layout. Prefer the composed deck's own first slide
+    # (its title is punchier than the raw goal); fall back to `title`.
+    lead = deck[0] if deck else {}
+    lead_title = str(lead.get("title") or title)[:120]
+    lead_sub = " · ".join(str(b) for b in (lead.get("bullets") or [])[:2]) or subtitle
     struct.append({"createSlide": {"objectId": "nx_slide_title",
                                    "slideLayoutReference": {"predefinedLayout": "TITLE"},
                                    "placeholderIdMappings": [
                                        {"layoutPlaceholder": {"type": "CENTERED_TITLE"}, "objectId": "nx_ttl_title"},
                                        {"layoutPlaceholder": {"type": "SUBTITLE"}, "objectId": "nx_ttl_sub"}]}})
-    text.append({"insertText": {"objectId": "nx_ttl_title", "text": title[:120]}})
-    if subtitle:
-        text.append({"insertText": {"objectId": "nx_ttl_sub", "text": subtitle[:200]}})
+    text.append({"insertText": {"objectId": "nx_ttl_title", "text": lead_title}})
+    if lead_sub:
+        text.append({"insertText": {"objectId": "nx_ttl_sub", "text": lead_sub[:200]}})
 
-    for i, slide in enumerate(deck):
+    for i, slide in enumerate(deck[1:] if deck else []):
         sid, tid, bid = f"nx_slide_{i:02d}", f"nx_title_{i:02d}", f"nx_body_{i:02d}"
         struct.append({"createSlide": {"objectId": sid,
                                        "slideLayoutReference": {"predefinedLayout": "TITLE_AND_BODY"},
@@ -282,14 +286,10 @@ def slide_deck_requests(deck: List[Dict], title: str, subtitle: str = "") -> Tup
         text.append({"insertText": {"objectId": tid, "text": str(slide.get("title", ""))[:160]}})
         bullets = [str(b) for b in (slide.get("bullets") or [])]
         if bullets:
-            body_text = "\n".join(bullets)
-            text.append({"insertText": {"objectId": bid, "text": body_text}})
+            text.append({"insertText": {"objectId": bid, "text": "\n".join(bullets)}})
             text.append({"createParagraphBullets": {
-                "objectId": bid,
-                "textRange": {"type": "ALL"},
+                "objectId": bid, "textRange": {"type": "ALL"},
                 "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"}})
-        notes = slide.get("notes")
-        # (speaker notes require the slide's notesPage id — added later if present)
 
     return struct, text
 
