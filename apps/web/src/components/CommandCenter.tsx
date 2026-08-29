@@ -164,6 +164,36 @@ export default function CommandCenter({ mission, events, onShowDetails }: Props)
           </div>
         )}
 
+        {mission.artifacts?.length > 0 && (
+          <div className="rounded border border-zinc-800 bg-zinc-900/50 p-4">
+            <p className="mb-2 text-xs font-bold tracking-widest text-zinc-500">DELIVERABLES</p>
+            <div className="space-y-1.5">
+              {mission.artifacts.map((a: any) => {
+                const icon: Record<string, string> = {
+                  DOC: "📄", SHEET: "📊", SLIDES: "📽", IMAGE: "🖼", VIDEO: "🎬",
+                  AUDIO: "🔊", EMAIL: "📧", DRAFT: "✉️", EVENT: "📅", TASK: "✅",
+                  FORM: "📝", ANALYSIS: "🔍", RESEARCH: "🔎",
+                };
+                const live = a.uri?.startsWith("http");
+                return (
+                  <div key={a.artifact_id} className="flex items-center gap-2 text-xs">
+                    <span>{icon[a.type] || "•"}</span>
+                    <span className="font-bold text-zinc-300">{a.type}</span>
+                    {live ? (
+                      <a href={a.uri} target="_blank" rel="noreferrer"
+                        className="truncate text-emerald-400 underline hover:text-emerald-300">
+                        open →
+                      </a>
+                    ) : (
+                      <span className="text-zinc-600">produced (demo mode)</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {mission.workspace_uri && (
           <div className="text-center">
             <a
@@ -212,6 +242,30 @@ export default function CommandCenter({ mission, events, onShowDetails }: Props)
           {PHASE_LABELS[phase]}
         </h2>
       </div>
+
+      {/* Outcome Contract — what "done" means for this mission */}
+      {mission.outcome_contract?.required_deliverables?.length > 0 && (
+        <div className="rounded border border-zinc-800 bg-zinc-900/50 p-4">
+          <p className="mb-2 text-xs font-bold tracking-widest text-zinc-500">
+            OUTCOME CONTRACT · WHAT SUCCESS LOOKS LIKE
+          </p>
+          <ul className="space-y-1 text-xs text-zinc-400">
+            {mission.outcome_contract.required_deliverables.slice(0, 6).map((d: string, i: number) => {
+              const done = mission.semantic_verification?.deliverables?.find(
+                (x: any) => x.name === d,
+              );
+              const mark = done?.status === "SATISFIED" ? "✓" : done?.status === "PARTIAL" ? "◐" : "○";
+              const cls = done?.status === "SATISFIED" ? "text-emerald-400" : "text-zinc-600";
+              return (
+                <li key={i} className="flex gap-2">
+                  <span className={cls}>{mark}</span>
+                  <span>{d}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Progress bar */}
       {totalNodes > 0 && phase === "EXECUTING" && (

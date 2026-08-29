@@ -184,9 +184,8 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-zinc-950 p-6 font-mono text-zinc-100 lg:p-10">
       <header className="mb-6 text-center">
-        <h1 className="bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-5xl font-black tracking-widest text-transparent lg:text-6xl">
-          NEXORA
-        </h1>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/wordmark-dark.svg" alt="NEXORA" className="mx-auto h-14 lg:h-16" />
         <p className="mt-3 text-base text-zinc-300">
           One goal in. A <span className="text-emerald-400">verified workspace of real work</span> out.
         </p>
