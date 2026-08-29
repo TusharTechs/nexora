@@ -76,11 +76,12 @@ flowchart TB
 ## Agent runtime (`core/adk_runtime.py`)
 
 `try_run_agent(role, instruction, task)` builds a `google.adk` `LlmAgent`
-(instruction = persona system prompt) and runs one turn through an
-`InMemoryRunner`. On any failure it returns `None` and the caller drops to the
-Unified LLM Client and then to deterministic templates — so the hermetic test
-suite never touches ADK. ADK's google‑genai layer is pointed at the same backend
-NEXORA uses.
+(instruction = the persona system prompt) and runs one turn through an ADK
+`Runner`. When `NEXORA_AGENT_ENGINE` is set the Runner is backed by **Vertex AI
+Agent Engine** — `VertexAiSessionService` + `VertexAiMemoryBankService`;
+otherwise an in‑process `InMemoryRunner`. On any failure it returns `None` and
+the caller drops to the Unified LLM Client and then to deterministic templates —
+so the hermetic test suite never touches ADK or Agent Engine.
 
 ## Key decisions
 
@@ -94,7 +95,7 @@ NEXORA uses.
   before it reaches a prompt.
 - **Swappable everything** — repository, dispatcher, scheduler, provider, model
   backend are interfaces with local + Google Cloud implementations.
-- 69 ADRs in [`adr/`](adr) record the reasoning.
+- 52 ADRs in [`adr/`](adr) record the reasoning.
 
 ## Execution modes
 
