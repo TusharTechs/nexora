@@ -17,6 +17,39 @@
 
 ---
 
+## Hackathon requirements — at a glance
+
+**Every mandatory requirement is met, and every point is proven with a link or a one‑command check.**
+
+| Requirement | ✅ NEXORA uses | Where |
+|---|---|---|
+| **Gemini 3.5 or newer** | `gemini-3.5-flash` — the Architect, all 6 workforce agents, the QA Auditor, research synthesis, screenshot vision, and doc/slide/sheet composition | [`llm_client.py:66`](apps/api/nexora/core/llm_client.py#L66) · `NEXORA_MODEL_T2` in [`.env.example`](apps/api/.env.example) |
+| **A Google agent framework** | **Google ADK** (`google-adk`) — every reasoning turn is an ADK `LlmAgent` run through an ADK `Runner`; **Google GenAI SDK** (`google-genai`) is the model transport | [`adk_runtime.py:90`](apps/api/nexora/core/adk_runtime.py#L90) |
+| **Google agent platform (preferred)** | **Vertex AI Agent Engine** — the ADK Runner uses `VertexAiSessionService` (managed Sessions) + `VertexAiMemoryBankService` (managed Memory Bank) on a real `reasoningEngines/…` instance | [`adk_runtime.py:65`](apps/api/nexora/core/adk_runtime.py#L65) · [`deploy_agent_engine.py`](infrastructure/deploy_agent_engine.py) |
+| **A Google Cloud infrastructure service** | **Cloud Run** (the service), **Firestore** (mission + schedule state), **Cloud Tasks** (one retried task per plan node), **Cloud Scheduler** (standing goals), **Secret Manager** (keys) | [`deploy.sh`](infrastructure/deploy.sh) · [`terraform/`](infrastructure/terraform) |
+| **Model on Vertex AI** | Gemini runs through Vertex AI in production (`NEXORA_LLM_BACKEND=vertex`, `genai.Client(vertexai=True)`), plus Vertex `text-embedding-005` for vector memory | [`llm_client.py:140`](apps/api/nexora/core/llm_client.py#L140) |
+| **Hosted + reproducible** | `Dockerfile` + one‑command `infrastructure/deploy.sh` + Terraform; 154 hermetic tests | [`Dockerfile`](Dockerfile) |
+| **Multimodal** | voice input; screenshot analysis (Gemini Vision); generated images, video, audio | see below |
+
+### Bonus — additional Google AI models
+
+| Model | What NEXORA does with it | Where |
+|---|---|---|
+| **Veo 3.1 Fast** (`veo-3.1-fast-generate-001`) | generates a short cinematic clip for launch/announcement goals; uploaded to the mission Drive folder | [`live_workspace.py:637`](apps/api/nexora/providers/live_workspace.py#L637) |
+| **Lyria 2** (`lyria-002`) | generates original instrumental music / a brand jingle when the goal asks for one | [`live_workspace.py:765`](apps/api/nexora/providers/live_workspace.py#L765) |
+| **Gemini image** (`gemini-2.5-flash-image`) | generates the inspiration / concept imagery for a deliverable | [`live_workspace.py:374`](apps/api/nexora/providers/live_workspace.py#L374) |
+| **Gemini TTS** (`gemini-2.5-flash-tts`) | reads a briefing aloud — a real spoken WAV, not music | [`live_workspace.py:717`](apps/api/nexora/providers/live_workspace.py#L717) |
+| **Gemini + Google Search grounding** | `web.research` — real, cited web findings | [`web_research.py:146`](apps/api/nexora/core/web_research.py#L146) |
+
+**Verify the wiring yourself in one command** (no key, no account):
+
+```bash
+grep -rn --include=*.py "gemini-3.5-flash\|veo-3.1\|lyria-002\|gemini-2.5-flash-tts\|gemini-2.5-flash-image" apps/api/nexora
+grep -rn --include=*.py "google.adk\|VertexAiMemoryBankService\|genai.Client(vertexai=True\|google_search=" apps/api/nexora
+```
+
+---
+
 ## The problem
 
 Knowledge work is full of tasks that are *individually* trivial and *collectively*

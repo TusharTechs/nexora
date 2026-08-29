@@ -55,6 +55,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
   const [gConnected, setGConnected] = useState<boolean | null>(null);
+  const [cfg, setCfg] = useState<any>(null);
+  useEffect(() => { safeGet(`${API}/api/v1/config`).then(setCfg); }, []);
 
   // Phase 12: Execution mode selector (MOCK demo vs LIVE real workspace)
   const [execMode, setExecMode] = useState<"MOCK" | "LIVE">("MOCK");
@@ -201,6 +203,23 @@ export default function Home() {
             </span>
           ))}
         </div>
+
+        {/* Live Google-stack badges — resolved from the running config */}
+        {cfg?.badges && (
+          <div className="mx-auto mt-4 flex max-w-3xl flex-wrap items-center justify-center gap-1.5">
+            {cfg.badges.map((b: any) => (
+              <span key={b.label}
+                title={`${b.label}: ${b.value}`}
+                className={`rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide ${
+                  b.on
+                    ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
+                    : "border-zinc-800 bg-zinc-900/50 text-zinc-500"
+                }`}>
+                {b.value}
+              </span>
+            ))}
+          </div>
+        )}
       </header>
 
       <div className="mx-auto max-w-3xl">

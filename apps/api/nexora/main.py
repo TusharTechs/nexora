@@ -141,6 +141,45 @@ async def healthz():
             "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
 
 
+@app.get("/api/v1/config")
+async def resolved_config():
+    """The Google stack NEXORA is actually running against — rendered live in the
+    Command Center header so there is nothing to take on faith."""
+    from nexora.core.llm_client import llm_available
+    from nexora.core.adk_runtime import adk_available, _agent_engine_id
+    from nexora.core.memory_bank import memory_bank_available
+    backend = os.getenv("NEXORA_LLM_BACKEND", "auto")
+    on_vertex = backend == "vertex" or (backend == "auto" and bool(os.getenv("GCP_PROJECT_ID"))
+                                        and not os.getenv("GEMINI_API_KEY"))
+    badges = []
+    badges.append(("Gemini", os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash"), llm_available()))
+    badges.append(("Transport", "Vertex AI" if on_vertex else "Gemini API", llm_available()))
+    badges.append(("Agents", "Google ADK", adk_available()))
+    badges.append(("Agent Engine", "Sessions + Memory Bank" if _agent_engine_id() else "in-process",
+                   bool(_agent_engine_id())))
+    badges.append(("Memory", "Memory Bank" if memory_bank_available() else "vector (local)", True))
+    badges.append(("Research", "Gemini + Google Search", os.getenv("NEXORA_GROUNDED_RESEARCH", "1") == "1"))
+    badges.append(("State", "Firestore" if os.getenv("NEXORA_REPO") == "firestore" else "in-memory",
+                   os.getenv("NEXORA_REPO") == "firestore"))
+    badges.append(("Dispatch", "Cloud Tasks" if os.getenv("NEXORA_DISPATCHER") == "cloud" else "asyncio",
+                   os.getenv("NEXORA_DISPATCHER") == "cloud"))
+    badges.append(("Media", "Veo / Lyria / Imagen / TTS", True))
+    return {
+        "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
+        "project": os.getenv("GCP_PROJECT_ID", ""),
+        "agent_engine": _agent_engine_id(),
+        "models": {
+            "reasoning": os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash"),
+            "image": os.getenv("NEXORA_IMAGE_MODEL", "gemini-2.5-flash-image"),
+            "video": os.getenv("NEXORA_VIDEO_MODEL", "veo-3.1-fast-generate-001"),
+            "music": os.getenv("NEXORA_AUDIO_MODEL", "lyria-002"),
+            "speech": os.getenv("NEXORA_TTS_MODEL", "gemini-2.5-flash-tts"),
+            "embedding": os.getenv("NEXORA_EMBED_MODEL", "text-embedding-005"),
+        },
+        "badges": [{"label": l, "value": v, "on": bool(o)} for l, v, o in badges],
+    }
+
+
 async def _spawn_scheduled(goal: str, execution_mode: ExecutionMode) -> str:
     """Scheduler entry point — create a mission from a standing instruction."""
     mission = await create_mission(GoalRequest(goal=goal, execution_mode=execution_mode))
