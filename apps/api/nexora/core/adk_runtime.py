@@ -1,15 +1,18 @@
-"""Google ADK runtime — NEXORA's specialist workforce runs as ADK agents (ADR-068).
+"""Google ADK runtime — NEXORA's specialist workforce runs as ADK agents
+(ADR-068, ADR-073).
 
 Each NEXORA persona (Research Analyst, Writer, Financial Analyst, Designer,
-Coordinator, Visual Designer) is materialised here as a `google.adk` `LlmAgent`
-whose `instruction` is the persona's system prompt. The Artifact Composer and the
-Semantic Verifier invoke these agents through an ADK `Runner`, so every
-deliverable is produced and checked by a named agent on Google's Agent
-Development Kit — not a bare model call.
+Coordinator, Visual Designer) is a `google.adk` `LlmAgent` whose `instruction`
+is the persona's system prompt. The Architect (plan compiler), the composer, and
+the QA Auditor invoke these agents through an ADK `Runner`.
 
-Falls back cleanly: if `google-adk` is not installed, or no Gemini/Vertex backend
-is configured, callers drop to the plain Unified LLM Client and then to
-deterministic templates. The hermetic test suite therefore never touches ADK.
+When `NEXORA_AGENT_ENGINE` is set the Runner is backed by **Vertex AI Agent
+Engine** — managed Sessions (`VertexAiSessionService`) and Memory Bank
+(`VertexAiMemoryBankService`); otherwise an in-process `InMemoryRunner`.
+
+Falls back cleanly: no `google-adk`, no backend, or any runtime error → callers
+drop to the Unified LLM Client and then to deterministic templates. The hermetic
+test suite blanks the relevant env vars, so it never touches ADK or Agent Engine.
 """
 from __future__ import annotations
 
@@ -53,20 +56,50 @@ def _slug(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name.lower()).strip("_") or "agent"
 
 
+def _agent_engine_id() -> str:
+    """The numeric reasoningEngine id, if NEXORA is wired to Agent Engine."""
+    v = os.getenv("NEXORA_AGENT_ENGINE", "").strip()
+    return v.rsplit("/", 1)[-1] if v else ""
+
+
+def _runner(agent):
+    """An ADK Runner. When NEXORA_AGENT_ENGINE is set the workforce runs with
+    Vertex AI Agent Engine's **managed Sessions + Memory Bank** instead of the
+    in-process services; otherwise an InMemoryRunner."""
+    engine_id = _agent_engine_id()
+    if engine_id:
+        try:
+            from google.adk.memory import VertexAiMemoryBankService
+            from google.adk.runners import Runner
+            from google.adk.sessions import VertexAiSessionService
+            proj = os.getenv("GCP_PROJECT_ID", "")
+            loc = os.getenv("GCP_LOCATION", "us-central1")
+            return Runner(
+                agent=agent, app_name=engine_id,
+                session_service=VertexAiSessionService(project=proj, location=loc,
+                                                       agent_engine_id=engine_id),
+                memory_service=VertexAiMemoryBankService(project=proj, location=loc,
+                                                         agent_engine_id=engine_id),
+            ), engine_id
+        except Exception:
+            pass
+    from google.adk.runners import InMemoryRunner
+    return InMemoryRunner(agent=agent, app_name="nexora"), "nexora"
+
+
 async def run_agent(*, role: str, instruction: str, task: str,
                     tools: Optional[List] = None, model: Optional[str] = None) -> str:
     """Run one ADK LlmAgent turn and return its final text. Raises on any failure
     so callers can fall back."""
     _configure_genai_env()
     from google.adk.agents import LlmAgent
-    from google.adk.runners import InMemoryRunner
     from google.genai import types
 
     agent = LlmAgent(name=_slug(role), model=model or _model(),
                      instruction=instruction, tools=tools or [])
-    runner = InMemoryRunner(agent=agent, app_name="nexora")
+    runner, app_name = _runner(agent)
     session = await runner.session_service.create_session(
-        app_name="nexora", user_id="mission")
+        app_name=app_name, user_id="mission")
     message = types.Content(role="user", parts=[types.Part(text=task)])
     final = ""
     async for event in runner.run_async(user_id="mission", session_id=session.id,

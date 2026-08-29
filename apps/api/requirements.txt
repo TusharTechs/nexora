@@ -6,6 +6,7 @@ httpx
 python-dotenv
 google-genai>=1.0.0
 google-adk>=1.0.0
+google-cloud-aiplatform[agent_engines,adk]>=1.95
 google-api-python-client
 google-auth
 google-auth-oauthlib

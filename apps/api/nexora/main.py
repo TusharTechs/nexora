@@ -32,7 +32,8 @@ from nexora.core.event_bus import LocalEventBus
 from nexora.core.runtime import MissionRuntime
 from nexora.core.security import ContentFirewall
 from nexora.core.audit import AuditTrail, AuditEntry, AuditKind
-from nexora.core.memory import InMemoryMemoryStore, TeachExtractor
+from nexora.core.memory import TeachExtractor
+from nexora.core.memory_bank import build_memory_store
 from nexora.core.forge import WorkflowForge
 from nexora.core.credential_store import LocalCredentialStore
 from nexora.core.model_router import ModelRouter
@@ -62,7 +63,7 @@ router = ModelRouter()
 bus = LocalEventBus()
 firewall = ContentFirewall()
 audit = AuditTrail()
-memory = InMemoryMemoryStore()
+memory = build_memory_store()
 forge = WorkflowForge(network)
 scheduler = MissionScheduler(build_schedule_repository())
 

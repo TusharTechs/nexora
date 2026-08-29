@@ -44,6 +44,15 @@ printf '%s' "${GEMINI_API_KEY:?set GEMINI_API_KEY}" | \
   printf '%s' "${GEMINI_API_KEY}" | \
   gcloud secrets versions add nexora-gemini-api-key --data-file=- --project "$PROJECT_ID"
 
+echo "==> Vertex AI Agent Engine (managed Sessions + Memory Bank)"
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com" \
+  --role="roles/aiplatform.user" --condition=None --quiet || true
+AGENT_ENGINE=$(GCP_PROJECT_ID="$PROJECT_ID" GCP_LOCATION="$REGION" \
+  python infrastructure/deploy_agent_engine.py)
+echo "    agent engine id: $AGENT_ENGINE"
+
 echo "==> Build image (Cloud Build, from repo root)"
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT_ID" .
 
@@ -52,7 +61,7 @@ gcloud run deploy nexora-api \
   --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" \
   --service-account "$SA" --timeout 600 --cpu 1 --memory 1Gi \
   --allow-unauthenticated \
-  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=firestore,NEXORA_DISPATCHER=cloud,NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA}" \
+  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=firestore,NEXORA_DISPATCHER=cloud,NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA},NEXORA_AGENT_ENGINE=${AGENT_ENGINE},NEXORA_MEMORY=memorybank" \
   --set-secrets "GEMINI_API_KEY=nexora-gemini-api-key:latest"
 
 URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
