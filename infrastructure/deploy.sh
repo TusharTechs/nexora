@@ -96,9 +96,23 @@ PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectN
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com" \
   --role="roles/aiplatform.user" --condition=None --quiet || true
+
+PY="${PYTHON:-python}"
+if ! "$PY" -c 'import vertexai' 2>/dev/null; then
+  echo "    installing google-cloud-aiplatform[agent_engines,adk] for the deploy helper..."
+  "$PY" -m pip install -q 'google-cloud-aiplatform[agent_engines,adk]>=1.95' || true
+fi
+# Non-fatal: without an Agent Engine, the ADK workforce runs on an in-process
+# runner and memory stays local (NEXORA_MEMORY unset). Still fully functional.
 AGENT_ENGINE=$(GCP_PROJECT_ID="$PROJECT_ID" GCP_LOCATION="$REGION" \
-  python infrastructure/deploy_agent_engine.py)
-echo "    agent engine id: $AGENT_ENGINE"
+  "$PY" infrastructure/deploy_agent_engine.py 2>/dev/null || true)
+if [ -n "$AGENT_ENGINE" ]; then
+  echo "    agent engine id: $AGENT_ENGINE"
+  AE_ENV=",NEXORA_AGENT_ENGINE=${AGENT_ENGINE},NEXORA_MEMORY=memorybank"
+else
+  echo "    Agent Engine unavailable — deploying with in-process runner + local memory."
+  AE_ENV=""
+fi
 
 echo "==> Build image (Cloud Build, from repo root)"
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT_ID" .
@@ -108,7 +122,7 @@ gcloud run deploy nexora-api \
   --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" \
   --service-account "$SA" --timeout 600 --cpu 1 --memory 1Gi \
   --allow-unauthenticated \
-  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=firestore,NEXORA_DISPATCHER=${DISPATCHER},NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA},NEXORA_AGENT_ENGINE=${AGENT_ENGINE},NEXORA_MEMORY=memorybank" \
+  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=firestore,NEXORA_DISPATCHER=${DISPATCHER},NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA}${AE_ENV}" \
   --set-secrets "GEMINI_API_KEY=nexora-gemini-api-key:latest"
 
 URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
