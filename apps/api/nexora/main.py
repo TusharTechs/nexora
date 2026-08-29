@@ -85,6 +85,7 @@ class GoalRequest(BaseModel):
     goal: str
     execution_mode: ExecutionMode = ExecutionMode.MOCK
     attachment: Optional[dict] = None
+    background: bool = False   # return immediately; plan+execute in the background
 
 class NodeRef(BaseModel):
     mission_id: str
@@ -215,10 +216,36 @@ async def run_due_schedules(_: None = Depends(require_internal_caller)):
 
 # ---------------- Missions ----------------
 
+_bg_tasks: set = set()
+
+
 @app.post("/api/v1/missions", response_model=Mission)
 async def create_mission(req: GoalRequest):
     mission = Mission(goal=req.goal, execution_mode=req.execution_mode)
     await repo.save(mission)
+
+    if req.background:
+        # Return now (state CREATED); plan + execute off the request path.
+        async def _run():
+            try:
+                await _plan_and_execute(mission, req)
+            except HTTPException as e:
+                mission.state = MissionState.FAILED
+                mission.failure_reason = str(e.detail)
+                await repo.save(mission)
+            except Exception as e:  # pragma: no cover
+                mission.state = MissionState.FAILED
+                mission.failure_reason = str(e)[:300]
+                await repo.save(mission)
+        t = asyncio.create_task(_run())
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
+        return mission
+
+    return await _plan_and_execute(mission, req)
+
+
+async def _plan_and_execute(mission: Mission, req: GoalRequest) -> Mission:
     try:
         mission.state = MissionStateMachine.transition(mission.state, MissionState.INTERPRETING)
         mission.intent = await MissionInterpreter(router).interpret(req.goal)
@@ -460,6 +487,30 @@ async def get_benchmark_result(mission_id: str):
     if bm is None:
         raise HTTPException(status_code=404, detail="Mission is not a benchmark")
     return evaluate_mission(mission, bm)
+
+@app.post("/api/v1/benchmarks/run-all")
+async def run_all_benchmarks():
+    """NEXORA grades itself: run every benchmark and return an aggregate scorecard."""
+    old_provider = runtime.registry.provider
+    runtime.registry.provider = AcmeLabsProvider()
+    results = []
+    try:
+        for bm in BENCHMARKS:
+            try:
+                m = await create_mission(GoalRequest(goal=bm.goal,
+                                                     execution_mode=ExecutionMode.ACME_LABS))
+                results.append(evaluate_mission(m, bm))
+            except Exception as e:
+                results.append({"benchmark_name": bm.name, "pass": False,
+                                "score": 0.0, "error": str(e)[:200]})
+    finally:
+        runtime.registry.provider = old_provider
+    passed = sum(1 for r in results if r.get("pass"))
+    return {"total": len(results), "passed": passed,
+            "pass_rate": round(passed / len(results), 2) if results else 0.0,
+            "avg_score": round(sum(r.get("score", 0) for r in results) / len(results), 2)
+                         if results else 0.0,
+            "results": results}
 
 
 # ---------------- Google OAuth (Phase 9.3) ----------------

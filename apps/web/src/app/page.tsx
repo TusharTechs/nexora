@@ -140,7 +140,7 @@ export default function Home() {
     try {
       const r = await fetch(`${API}/api/v1/missions`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, execution_mode: execMode, attachment }),
+        body: JSON.stringify({ goal, execution_mode: execMode, attachment, background: true }),
       });
       if (!r.ok) {
         const detail = await r.json().catch(() => null);

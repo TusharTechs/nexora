@@ -235,4 +235,5 @@ class Mission(BaseModel):
     workspace_folder_id: Optional[str] = None
     workspace_uri: Optional[str] = None
     replan_count: int = 0
+    failure_reason: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
