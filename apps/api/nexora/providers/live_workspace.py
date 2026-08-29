@@ -576,12 +576,11 @@ class LiveWorkspaceProvider:
                 img_bytes = None
         text_hint = attachment.get("text", "")
         try:
-            from google import genai
             from google.genai import types
-            key = os.getenv("GEMINI_API_KEY", "")
+            from nexora.core.llm_client import genai_client, llm_available
             model = os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
-            if key and img_bytes:
-                client = genai.Client(api_key=key)
+            if llm_available() and img_bytes:
+                client = genai_client()
                 prompt = ("Analyze this screenshot/image. Extract any error codes, stack traces, "
                           "UI state, and what the user is seeing. Return JSON: "
                           '{"error_code": "...", "summary": "...", "visual_evidence": "..."}')

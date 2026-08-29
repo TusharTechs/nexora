@@ -95,7 +95,8 @@ class ContractGenerator:
         self.call_fn = call_fn   # test seam
 
     async def generate(self, goal: str, intent: Optional[MissionIntent] = None) -> OutcomeContract:
-        if not self.api_key and not self.call_fn:
+        from nexora.core.llm_client import llm_available
+        if not self.call_fn and not llm_available():
             return self._minimal_contract(goal)
 
         try:
@@ -104,20 +105,23 @@ class ContractGenerator:
             if parsed is None:
                 return self._minimal_contract(goal)
             return OutcomeContract(**parsed)
-        except Exception as e:
+        except Exception:
             # Graceful degradation — never hard-fail a mission at contract stage
             return self._minimal_contract(goal)
 
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.post(url, headers={"x-goog-api-key": self.api_key},
-                             json={"contents": [{"parts": [{"text": prompt}]}],
-                                   "generationConfig": {"temperature": 0.2}})
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        from nexora.core.adk_runtime import try_run_agent
+        adk = await try_run_agent(
+            role="Mission Architect",
+            instruction=("You are NEXORA's Mission Architect. You turn a goal into a "
+                         "formal, checkable Outcome Contract. You output only JSON."),
+            task=prompt)
+        if adk and adk.strip():
+            return adk
+        from nexora.core.llm_client import llm_generate
+        return await llm_generate(prompt, temperature=0.2, model=self.model)
 
     def _prompt(self, goal: str) -> str:
         return CONTRACT_PROMPT.format(goal=goal)

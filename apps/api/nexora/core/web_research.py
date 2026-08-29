@@ -237,9 +237,10 @@ class WebResearchService:
             for r in results
         )
 
+        from nexora.core.llm_client import llm_available
         if self.call_fn:
             text = self.call_fn(RESEARCH_PROMPT.format(objective=objective, raw_results=raw_text))
-        elif self.gemini_key:
+        elif llm_available():
             try:
                 text = await self._call_gemini(objective, raw_text)
             except Exception:
@@ -271,8 +272,17 @@ class WebResearchService:
         )
 
     async def _call_gemini(self, objective: str, raw_text: str) -> str:
-        from nexora.core.llm_client import llm_generate
         prompt = RESEARCH_PROMPT.format(objective=objective, raw_results=raw_text)
+        from nexora.core.adk_runtime import try_run_agent
+        adk = await try_run_agent(
+            role="Research Analyst",
+            instruction=("You are NEXORA's Research Analyst. You synthesize web results "
+                         "into cited factual findings. Every claim keeps its source URL. "
+                         "You output only JSON."),
+            task=prompt)
+        if adk and adk.strip():
+            return adk
+        from nexora.core.llm_client import llm_generate
         return await llm_generate(prompt, temperature=0.1, model=self.model)
 
     def _parse(self, text: str) -> Optional[Dict[str, Any]]:
