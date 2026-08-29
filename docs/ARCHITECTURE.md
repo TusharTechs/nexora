@@ -1,106 +1,100 @@
 # NEXORA architecture
 
-NEXORA is a single FastAPI service (the **mission engine**) plus a Next.js
-**Command Center** UI. The engine runs identically on a laptop and on Cloud Run;
-only environment variables change what's real.
+One FastAPI service (the **mission engine**) + a Next.js **Command Center** UI.
+The engine runs identically on a laptop and on Cloud Run; environment variables
+decide what is real.
 
-## System diagram
+## One-glance diagram
 
 ```mermaid
 flowchart TB
-    subgraph Client
-        UI[Next.js Command Center<br/>WebSocket + REST]
+    UI[Command Center UI] <-->|goal · live updates| API
+
+    subgraph CR["Cloud Run — NEXORA API"]
+      API[REST + WebSocket]
+      ARCH["Mission Architect agent<br/>contract + plan"]
+      WORK["Workforce: 6 specialist agents<br/>compose each deliverable"]
+      QA["QA Auditor agent<br/>verify vs contract"]
+      GOV["Firewall · Policy/Approval · Receipts · Audit"]
+      API --> ARCH --> WORK --> QA
+      QA -->|gaps| ARCH
+      WORK -.-> GOV
     end
 
-    subgraph CloudRun["Cloud Run — NEXORA API (FastAPI)"]
-        API[REST + WebSocket]
-        subgraph Pipeline["Mission pipeline"]
-            INT[Interpreter] --> CON[Contract Generator]
-            CON --> CTX[Context Discovery]
-            CTX --> CMP[LLM Plan Compiler<br/>+ deterministic fallback]
-            CMP --> CRI[Plan Critic]
-            CRI --> RUN[Mission Runtime]
-        end
-        RUN --> EXE[Node Executor]
-        EXE --> COMP[Artifact Composer]
-        EXE --> FW[Content Firewall]
-        EXE --> POL[Policy Engine + Approval Gate]
-        RUN --> SUP[Supervisor]
-        SUP --> SV[Semantic Verifier]
-        SUP --> AR[Adaptive Replanner]
-        RUN --> DISP[Task Dispatcher]
+    subgraph GC["Google Cloud"]
+      VERTEX["Vertex AI — Gemini 3.5<br/>+ image / Veo / Lyria"]
+      FS[(Firestore — mission state)]
+      TASKS[Cloud Tasks — one task per node]
+      SCHED[Cloud Scheduler — standing goals]
+      WSAPI[Workspace APIs — Docs/Sheets/Slides/Gmail/Calendar/Drive]
+      SM[Secret Manager]
     end
 
-    subgraph Google["Google Cloud"]
-        GENAI[Vertex AI / Gemini API<br/>Gemini 3.5, Imagen, Veo, Lyria]
-        FS[(Firestore<br/>mission state)]
-        CT[Cloud Tasks<br/>nexora-workers queue]
-        WS[Google Workspace APIs<br/>Docs / Sheets / Slides / Gmail / Calendar / Tasks / Drive]
-        SM[Secret Manager]
-    end
-
-    UI <-->|goal, live updates| API
-    COMP --> GENAI
-    CON --> GENAI
-    CMP --> GENAI
-    SV --> GENAI
-    RUN <--> FS
-    DISP --> CT
-    CT -->|POST /internal/execute_node| API
-    EXE -->|LIVE mode| WS
-    API -.reads.-> SM
+    ARCH --> VERTEX
+    WORK --> VERTEX
+    QA --> VERTEX
+    API <--> FS
+    API --> TASKS --> API
+    SCHED -->|/internal/run_due| API
+    WORK -->|LIVE| WSAPI
+    API -.-> SM
 ```
+
+## Why this stack
+
+| Choice | Reason |
+| --- | --- |
+| **Cloud Run** | stateless HTTP service, scale‑to‑zero, one image for API + node worker. |
+| **Firestore** | the `Mission` aggregate is one JSON document; no schema migrations; serverless; `FIRESTORE_EMULATOR_HOST` gives a zero‑cost local mode. |
+| **Cloud Tasks** | each plan node is an independently‑retried unit of work; a mission waiting on approval simply has no queued task. |
+| **Cloud Scheduler** | fires `/internal/run_due` every minute so standing goals span days/weeks without a long‑lived process. |
+| **Vertex AI + ADK** | Gemini as first‑class agents with a runner, sessions and tool plumbing; Vertex keeps the key off the request path in prod. |
+| **GenAI SDK** | one client for Gemini API *and* Vertex; native Google Search grounding and image generation. |
 
 ## Request lifecycle
 
-`POST /api/v1/missions` (`create_mission` in `main.py`) runs the synchronous
-planning arc, then hands execution to the runtime:
+`POST /api/v1/missions` runs the planning arc, then the runtime executes:
 
 | Phase | Component | Output |
 | --- | --- | --- |
 | INTERPRETING | `agents/interpreter.py` | `MissionIntent` |
-| — | `core/contract.py` | `OutcomeContract` (Gemini) |
+| — | `core/contract.py` (Architect agent) | `OutcomeContract` |
 | — | `core/context_discovery.py` | `ContextBundle` |
-| PLANNING | `core/llm_compiler.py` → `core/compiler.py` fallback | `MissionNode` DAG |
+| PLANNING | `core/llm_compiler.py` (Architect agent) → `core/compiler.py` fallback | `MissionNode` DAG |
 | CRITICIZING | `agents/critic.py` | approve / reject |
-| EXECUTING | `core/runtime.py` + `agents/node_executor.py` | artifacts, receipts |
-| VERIFYING | `agents/supervisor.py` + `core/semantic_verifier.py` | `SemanticVerificationReport` |
+| EXECUTING | `core/runtime.py` + `agents/node_executor.py` + `core/composer.py` (specialist agents) + `providers/formatting.py` | formatted artifacts, receipts |
+| VERIFYING | `agents/supervisor.py` + `core/semantic_verifier.py` (Auditor agent) | `SemanticVerificationReport` |
 | REPLANNING | `core/adaptive_replanner.py` | follow‑up nodes (≤2 cycles) |
-| COMPLETED / PARTIAL_SUCCESS / FAILED | `core/state_machine.py` | terminal state + health |
+| terminal | `core/state_machine.py` | COMPLETED / PARTIAL_SUCCESS / FAILED + health |
 
-Each node is dispatched through the **Task Dispatcher**:
+## Agent runtime (`core/adk_runtime.py`)
 
-- **local** (`LocalTaskDispatcher`) — an `asyncio` task; used in dev and tests.
-- **cloud** (`CloudTasksDispatcher`) — one Cloud Tasks HTTP task per node,
-  hitting `POST /internal/execute_node`, retried by the queue. A mission that is
-  waiting for human approval or is spread over hours simply has no in‑flight
-  task until it's unblocked — that's the long‑running story.
+`try_run_agent(role, instruction, task)` builds a `google.adk` `LlmAgent`
+(instruction = persona system prompt) and runs one turn through an
+`InMemoryRunner`. On any failure it returns `None` and the caller drops to the
+Unified LLM Client and then to deterministic templates — so the hermetic test
+suite never touches ADK. ADK's google‑genai layer is pointed at the same backend
+NEXORA uses.
 
-## Key design decisions
+## Key decisions
 
-- **Capabilities, not APIs.** The planner reasons over a registry of ~26
-  semantic capabilities with cost/risk/reversibility metadata
-  (`core/capability_network.py`). The LLM's plan is untrusted and every node is
-  validated against the registry and the constitution before execution.
-- **The Outcome Contract is the spine.** It's generated once, then consumed by
-  the compiler (what to plan), the critic (does the plan cover it), the composer
-  (what to write), and the verifier (is it actually done).
-- **Composer separates content from delivery.** `core/composer.py` produces the
-  real document / slide / spreadsheet content from evidence; the provider only
-  persists it. MOCK and LIVE therefore produce the same substance.
-- **Everything external is untrusted.** `core/security.py` scans Gmail/Drive/web
-  text for injection signatures and quarantines malicious payloads before they
-  reach a prompt.
-- **Swappable everything.** `MissionRepository`, `TaskDispatcher`, `EventBus`,
-  `WorkspaceProvider`, `LLMClient` are all interfaces with a local and a cloud
-  implementation.
-- 65 ADRs in [`docs/adr`](adr) record the reasoning in detail.
+- **Capabilities, not APIs.** The Architect plans over ~26 semantic capabilities
+  with cost/risk/reversibility metadata; the plan is untrusted and validated.
+- **The Outcome Contract is the spine** — generated once, consumed by the
+  compiler, the critic, the composer and the verifier.
+- **Composer separates content from delivery** — Gemini writes it, the provider
+  renders it, so MOCK and LIVE produce the same substance.
+- **Everything external is untrusted** — `core/security.py` quarantines injection
+  before it reaches a prompt.
+- **Swappable everything** — repository, dispatcher, scheduler, provider, model
+  backend are interfaces with local + Google Cloud implementations.
+- 69 ADRs in [`adr/`](adr) record the reasoning.
 
 ## Execution modes
 
 | Mode | Providers | Use |
 | --- | --- | --- |
-| `MOCK` | seeded in‑memory workspace | demo / CI — needs only a Gemini key |
+| `MOCK` | seeded in‑memory workspace | demo / CI — Gemini key only |
 | `LIVE` | real Google Workspace via OAuth | production deliverables in Drive |
 | `ACME_LABS` | scripted benchmark sandbox | deterministic evaluation |
-| `REPLAY` | replays a past mission's artifacts | zero‑mutation regression checks |
+| `REPLAY` | replays a past mission's artifacts | zero‑mutation regression |

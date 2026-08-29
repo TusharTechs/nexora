@@ -64,6 +64,34 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const voice = useVoice((text) => setGoal(text));
 
+  // Phase 22: Standing instructions (scheduled missions)
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleCadence, setScheduleCadence] = useState("weekdays");
+  const refreshSchedules = async () => {
+    const s = await safeGet(`${API}/api/v1/schedules`);
+    if (s) setSchedules(s);
+  };
+  useEffect(() => { refreshSchedules(); }, []);
+  const addSchedule = async () => {
+    if (!goal.trim()) return;
+    await fetch(`${API}/api/v1/schedules`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, cadence: scheduleCadence, hour_utc: 7, execution_mode: execMode }),
+    });
+    setShowSchedule(false);
+    refreshSchedules();
+  };
+  const runSchedule = async (id: string) => {
+    const r = await fetch(`${API}/api/v1/schedules/${id}/run`, { method: "POST" });
+    if (r.ok) { const d = await r.json(); refresh(d.mission_id); setMission({ mission_id: d.mission_id, state: "EXECUTING", nodes: [] }); }
+    refreshSchedules();
+  };
+  const deleteSchedule = async (id: string) => {
+    await fetch(`${API}/api/v1/schedules/${id}`, { method: "DELETE" });
+    refreshSchedules();
+  };
+
   // Phase 9.4: deep-link from Scenario Gallery (?goal=...)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get("goal");
@@ -216,7 +244,47 @@ export default function Home() {
             className="rounded bg-emerald-500 px-6 py-3 text-sm font-bold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">
             {loading ? "Launching…" : "Launch"}
           </button>
+
+          <button onClick={() => setShowSchedule((v) => !v)} title="Run this goal on a schedule"
+            className={`rounded border px-4 py-3 text-sm ${showSchedule ? "border-amber-500 bg-amber-900/30 text-amber-300" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+            🗓
+          </button>
         </section>
+
+        {showSchedule && (
+          <section className="mb-4 flex items-center gap-2 rounded border border-amber-800 bg-amber-950/20 p-3 text-xs">
+            <span className="text-amber-300">Run this goal</span>
+            <select value={scheduleCadence} onChange={(e) => setScheduleCadence(e.target.value)}
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200">
+              <option value="once">once (in ~1 min)</option>
+              <option value="daily">every day</option>
+              <option value="weekdays">every weekday</option>
+              <option value="weekly">every week</option>
+              <option value="monthly">every month</option>
+            </select>
+            <span className="text-zinc-500">at 07:00 UTC · {execMode}</span>
+            <button onClick={addSchedule} className="rounded bg-amber-600 px-3 py-1 font-bold text-zinc-950 hover:bg-amber-500">
+              Add standing instruction
+            </button>
+          </section>
+        )}
+
+        {schedules.length > 0 && (
+          <section className="mb-4 rounded border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="mb-2 text-xs font-bold tracking-widest text-zinc-500">STANDING INSTRUCTIONS · {schedules.length}</p>
+            <div className="space-y-1.5">
+              {schedules.map((s) => (
+                <div key={s.schedule_id} className="flex items-center gap-2 text-xs">
+                  <span className="rounded bg-amber-900/40 px-2 py-0.5 text-amber-300">{s.cadence}</span>
+                  <span className="flex-1 truncate text-zinc-300">{s.goal}</span>
+                  <span className="text-zinc-600">next {new Date(s.next_run).toLocaleString()}{s.run_count > 0 ? ` · ran ${s.run_count}×` : ""}</span>
+                  <button onClick={() => runSchedule(s.schedule_id)} className="rounded bg-zinc-700 px-2 py-0.5 hover:bg-zinc-600">Run now</button>
+                  <button onClick={() => deleteSchedule(s.schedule_id)} className="text-zinc-600 hover:text-red-400">✕</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Status indicators */}
         {attachment && (
