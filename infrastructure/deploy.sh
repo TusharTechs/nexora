@@ -158,10 +158,12 @@ bind_member "$CB_SA" roles/artifactregistry.writer
 echo "==> Build image (Cloud Build, from repo root)"
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT_ID" .
 
-# demo: one warm instance with CPU always allocated so the in-process task graph
-# keeps running after the HTTP response returns.
-SCALING=(--min-instances=1 --no-cpu-throttling)
-[ "$PROFILE" = "scale" ] && SCALING=(--min-instances=0)
+# demo: exactly one warm instance with CPU always allocated. Mission state lives
+# in that instance's memory, so it must not scale out (a second instance would
+# 404 on missions the first one is running) and must not be CPU-throttled (the
+# in-process task graph keeps running after the HTTP response returns).
+SCALING=(--min-instances=1 --max-instances=1 --no-cpu-throttling)
+[ "$PROFILE" = "scale" ] && SCALING=(--min-instances=0 --max-instances=10)
 
 echo "==> Deploy to Cloud Run"
 gcloud run deploy nexora-api \
