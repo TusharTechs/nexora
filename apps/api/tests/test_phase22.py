@@ -32,7 +32,7 @@ def test_scheduler_due_and_advance():
                            next_run=_now() - timedelta(minutes=1))
     future = MissionSchedule(goal="later", cadence="daily",
                              next_run=_now() + timedelta(hours=5))
-    s.add(past); s.add(future)
+    asyncio.run(s.add(past)); asyncio.run(s.add(future))
     due = s.due()
     assert past in due and future not in due
 
@@ -47,10 +47,30 @@ def test_once_schedule_deactivates_after_fire():
     s = MissionScheduler()
     once = MissionSchedule(goal="one time", cadence="once",
                            next_run=_now() - timedelta(seconds=1))
-    s.add(once)
+    asyncio.run(s.add(once))
     s.mark_fired(once, "m")
     assert once.active is False
     assert once not in s.due()
+
+
+def test_scheduler_persists_and_reloads_from_repo():
+    """Restart continuity: a schedule survives a fresh MissionScheduler."""
+    from nexora.core.repository import InMemoryScheduleRepository
+    repo = InMemoryScheduleRepository()
+    s1 = MissionScheduler(repo)
+    sched = MissionSchedule(goal="weekly review", cadence="weekly",
+                            next_run=_now() + timedelta(days=1))
+    asyncio.run(s1.add(sched))
+
+    s2 = MissionScheduler(repo)          # simulates a process restart
+    asyncio.run(s2.load())
+    assert s2.get(sched.schedule_id) is not None
+    assert s2.list()[0].goal == "weekly review"
+
+    assert asyncio.run(s2.remove(sched.schedule_id)) is True
+    s3 = MissionScheduler(repo)
+    asyncio.run(s3.load())
+    assert s3.get(sched.schedule_id) is None
 
 
 def test_schedule_api_roundtrip_and_run_now():
@@ -72,6 +92,24 @@ def test_schedule_api_roundtrip_and_run_now():
 
             r = await ac.delete(f"/api/v1/schedules/{sid}")
             assert r.status_code == 200
+    asyncio.run(_run())
+
+
+def test_internal_endpoints_open_by_default_but_gate_when_audience_set():
+    import os
+    async def _run():
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            # default: no NEXORA_INTERNAL_AUDIENCE -> open
+            r = await ac.post("/internal/run_due")
+            assert r.status_code == 200
+            # audience set -> a call with no token is rejected
+            os.environ["NEXORA_INTERNAL_AUDIENCE"] = "https://nexora.example.run.app"
+            try:
+                r = await ac.post("/internal/run_due")
+                assert r.status_code == 401
+            finally:
+                os.environ.pop("NEXORA_INTERNAL_AUDIENCE", None)
     asyncio.run(_run())
 
 

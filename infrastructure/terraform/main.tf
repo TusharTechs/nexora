@@ -145,6 +145,12 @@ resource "google_cloud_run_v2_service" "api" {
         value = google_service_account.api.email
       }
       env {
+        name  = "NEXORA_INTERNAL_SA"
+        value = google_service_account.api.email
+      }
+      # NEXORA_WORKER_URL and NEXORA_INTERNAL_AUDIENCE are the service's own URL —
+      # set them after the first apply (see the note below).
+      env {
         name = "GEMINI_API_KEY"
         value_source {
           secret_key_ref {
@@ -175,9 +181,10 @@ resource "google_cloud_scheduler_job" "run_due" {
   depends_on = [google_project_service.svc]
 }
 
-# NEXORA_WORKER_URL must equal the service URL — set it after first deploy:
-#   gcloud run services update nexora-api --region REGION \
-#     --update-env-vars NEXORA_WORKER_URL=$(gcloud run services describe nexora-api \
-#       --region REGION --format='value(status.url)')
+# NEXORA_WORKER_URL and NEXORA_INTERNAL_AUDIENCE must equal the service URL —
+# set them after the first apply:
+#   URL=$(gcloud run services describe nexora-api --region REGION --format='value(status.url)')
+#   gcloud run services update nexora-api --region REGION --update-env-vars \
+#     NEXORA_WORKER_URL=$URL,NEXORA_INTERNAL_AUDIENCE=$URL
 output "service_url" { value = google_cloud_run_v2_service.api.uri }
 output "service_account" { value = google_service_account.api.email }

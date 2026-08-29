@@ -56,9 +56,9 @@ gcloud run deploy nexora-api \
   --set-secrets "GEMINI_API_KEY=nexora-gemini-api-key:latest"
 
 URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
-echo "==> Wiring NEXORA_WORKER_URL=$URL"
+echo "==> Wiring worker URL + zero-trust OIDC gate for /internal/*"
 gcloud run services update nexora-api --region "$REGION" --project "$PROJECT_ID" \
-  --update-env-vars "NEXORA_WORKER_URL=${URL}"
+  --update-env-vars "NEXORA_WORKER_URL=${URL},NEXORA_INTERNAL_AUDIENCE=${URL},NEXORA_INTERNAL_SA=${SA}"
 
 echo "==> Cloud Scheduler: fire due mission schedules every minute"
 gcloud scheduler jobs create http nexora-run-due --location="$REGION" --project "$PROJECT_ID" \

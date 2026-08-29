@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from apps/api/.env before anything reads it
 
 import httpx
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from packages.core.models import (Mission, MissionState, ExecutionMode, MissionI
                                   MissionNode, MemoryEntry, MemoryType, MemoryScope,
                                   MissionSchedule)
 from nexora.core.scheduler import MissionScheduler, first_run_for
+from nexora.core.repository import build_schedule_repository
 from nexora.core.repository import build_repository
 from nexora.core.state_machine import MissionStateMachine, InvalidStateTransitionError
 from nexora.core.capability_network import     CapabilityNetwork
@@ -62,7 +64,7 @@ firewall = ContentFirewall()
 audit = AuditTrail()
 memory = InMemoryMemoryStore()
 forge = WorkflowForge(network)
-scheduler = MissionScheduler()
+scheduler = MissionScheduler(build_schedule_repository())
 
 def build_registry(mode: ExecutionMode) -> ProviderRegistry:
     if mode == ExecutionMode.LIVE:
@@ -98,6 +100,31 @@ class TeachRequest(BaseModel):
     instruction: str
 
 
+async def require_internal_caller(authorization: str = Header(default="")):
+    """Zero-trust gate for /internal/* — when NEXORA_INTERNAL_AUDIENCE is set
+    (production), the caller must present a Google-signed OIDC token for that
+    audience (Cloud Tasks / Cloud Scheduler attach one). Off by default so local
+    dev and tests are unaffected."""
+    audience = os.getenv("NEXORA_INTERNAL_AUDIENCE", "")
+    if not audience:
+        return
+    token = authorization[7:] if authorization.lower().startswith("bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as grequests
+        claims = await asyncio.to_thread(
+            id_token.verify_oauth2_token, token, grequests.Request(), audience)
+        allowed = os.getenv("NEXORA_INTERNAL_SA", "")
+        if allowed and claims.get("email") != allowed:
+            raise HTTPException(status_code=403, detail="caller not allowed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"invalid OIDC token: {e}")
+
+
 async def _get_or_404(mission_id: str) -> Mission:
     mission = await repo.get(mission_id)
     if not mission:
@@ -122,6 +149,7 @@ async def _spawn_scheduled(goal: str, execution_mode: ExecutionMode) -> str:
 async def _startup():
     audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
                             title="api.started", detail="NEXORA API started."))
+    await scheduler.load()   # rehydrate standing instructions from Firestore
     # Local dev / single-instance: run the scheduler in-process. In production
     # Cloud Scheduler pings /internal/run_due every minute instead.
     if os.getenv("NEXORA_SCHEDULER_LOOP", "1") == "1" and os.getenv("NEXORA_DISPATCHER") != "cloud":
@@ -148,7 +176,7 @@ async def create_schedule(req: ScheduleRequest):
     sched = MissionSchedule(goal=req.goal, cadence=req.cadence, hour_utc=req.hour_utc,
                             minute_utc=req.minute_utc, execution_mode=req.execution_mode,
                             next_run=next_run)
-    scheduler.add(sched)
+    await scheduler.add(sched)
     audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
                             title="schedule_created",
                             detail=f"{req.cadence}: {req.goal[:80]}"))
@@ -162,7 +190,7 @@ async def list_schedules():
 
 @app.delete("/api/v1/schedules/{schedule_id}")
 async def delete_schedule(schedule_id: str):
-    if not scheduler.remove(schedule_id):
+    if not await scheduler.remove(schedule_id):
         raise HTTPException(status_code=404, detail="Schedule not found")
     return {"deleted": schedule_id}
 
@@ -174,11 +202,12 @@ async def run_schedule_now(schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     mid = await _spawn_scheduled(sched.goal, sched.execution_mode)
     scheduler.mark_fired(sched, mid)
+    await scheduler._persist(sched)
     return {"schedule_id": schedule_id, "mission_id": mid}
 
 
 @app.post("/internal/run_due")
-async def run_due_schedules():
+async def run_due_schedules(_: None = Depends(require_internal_caller)):
     """Pinged by Cloud Scheduler every minute in production."""
     spawned = await scheduler.run_due(_spawn_scheduled)
     return {"spawned": spawned, "count": len(spawned)}
@@ -257,13 +286,13 @@ async def create_mission(req: GoalRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/internal/execute_node")
-async def execute_node_internal(ref: NodeRef):
+async def execute_node_internal(ref: NodeRef, _: None = Depends(require_internal_caller)):
     await runtime.process_node(ref.mission_id, ref.node_id)
     return {"status": "dispatched"}
 
 
 @app.post("/internal/reset")
-async def reset_all_state():
+async def reset_all_state(_: None = Depends(require_internal_caller)):
     if hasattr(repo, "clear"): repo.clear()
     audit.clear(); memory.clear(); bus.clear(); forge.clear(); scheduler.clear()
     if hasattr(registry.provider, "reset_seed"): registry.provider.reset_seed()

@@ -9,10 +9,13 @@ locally a background asyncio loop does the same. This is how a NEXORA task can
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
 from packages.core.models import MissionSchedule
+
+_log = logging.getLogger("nexora.scheduler")
 
 
 def _utcnow() -> datetime:
@@ -36,14 +39,34 @@ def _advance(dt: datetime, cadence: str) -> datetime:
 
 
 class MissionScheduler:
-    def __init__(self):
+    def __init__(self, repo=None):
         self._schedules: Dict[str, MissionSchedule] = {}
         self._loop_task: Optional[asyncio.Task] = None
+        self._repo = repo   # ScheduleRepository | None
+
+    async def load(self):
+        """Rehydrate from the durable repository on startup."""
+        if self._repo is None:
+            return
+        try:
+            for s in await self._repo.all():
+                self._schedules[s.schedule_id] = s
+            if self._schedules:
+                _log.info("scheduler: loaded %d schedule(s) from store", len(self._schedules))
+        except Exception as e:
+            _log.warning("scheduler: could not load schedules: %s", e)
+
+    async def _persist(self, sched: MissionSchedule):
+        if self._repo is not None:
+            try:
+                await self._repo.save(sched)
+            except Exception as e:
+                _log.warning("scheduler: persist failed for %s: %s", sched.schedule_id, e)
 
     # ---- CRUD ----
-    def add(self, sched: MissionSchedule) -> MissionSchedule:
-        # normalise next_run to the requested time-of-day if in the future today
+    async def add(self, sched: MissionSchedule) -> MissionSchedule:
         self._schedules[sched.schedule_id] = sched
+        await self._persist(sched)
         return sched
 
     def get(self, sid: str) -> Optional[MissionSchedule]:
@@ -52,8 +75,14 @@ class MissionScheduler:
     def list(self) -> List[MissionSchedule]:
         return sorted(self._schedules.values(), key=lambda s: s.next_run)
 
-    def remove(self, sid: str) -> bool:
-        return self._schedules.pop(sid, None) is not None
+    async def remove(self, sid: str) -> bool:
+        existed = self._schedules.pop(sid, None) is not None
+        if existed and self._repo is not None:
+            try:
+                await self._repo.delete(sid)
+            except Exception as e:
+                _log.warning("scheduler: delete failed for %s: %s", sid, e)
+        return existed
 
     def clear(self):
         self._schedules.clear()
@@ -85,9 +114,10 @@ class MissionScheduler:
             try:
                 mission_id = await spawn(sched.goal, sched.execution_mode)
                 self.mark_fired(sched, mission_id)
+                await self._persist(sched)
                 spawned.append(mission_id)
             except Exception as e:  # pragma: no cover
-                print(f"[scheduler] schedule {sched.schedule_id} failed: {e}")
+                _log.warning("scheduler: schedule %s failed: %s", sched.schedule_id, e)
         return spawned
 
     # ---- local background loop (Cloud Scheduler replaces this in prod) ----
