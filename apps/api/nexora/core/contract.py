@@ -70,6 +70,10 @@ Rules:
   "just", or asks for a single thing, return exactly 1-2 deliverables. Only a
   goal that explicitly asks to "prepare everything" / lists multiple artifacts
   should get 4+ deliverables. Never pad.
+- Do NOT split one deliverable into sub-parts. A "study plan" is ONE document,
+  not a roadmap doc + a schedule doc + a self-assessment doc. Merge related
+  outputs into a single deliverable unless the goal explicitly asks for them
+  as separate files.
 - Keep it concise: 1-6 deliverables, 2-5 success criteria, 1-4 evidence items.
 """
 

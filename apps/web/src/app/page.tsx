@@ -8,27 +8,27 @@ import { useVoice } from "@/hooks/useVoice";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TERMINAL = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"];
 
-// Phase 12: Expanded scenario library covering all goal types
+// Built-in scenarios — every one runs end to end and is verified against a contract.
 const SCENARIOS = [
   // Business & Work
-  { label: "💼 Business Launch", goal: "I'm starting my new business project tomorrow. Prepare everything I need: business plan doc, learning materials, budget sheet, pitch deck, kickoff meeting, and tasks." },
-  { label: "🚀 Launch Aurora", goal: "Prepare everything to launch Product X next Friday: research, budget sheet, meetings, deck, announcement." },
-  { label: "🚨 Customer Escalation", goal: "A customer sent a screenshot of a production error. Investigate, analyze the screenshot, estimate impact, create the incident report, notify the team, and create follow-up tasks." },
-  { label: "📊 Weekly Review", goal: "Search emails and drive files, read the metrics sheet, and write the weekly business report." },
-  { label: "📧 Email Summary", goal: "Search my inbox for recent emails and create a summary of what I missed." },
-  // Travel & Lifestyle (Phase 10: Imagen images)
-  { label: "🏝 Dream Trip", goal: "I want to go to the best island in the world. Recommend where I should go and prepare a travel brief with pictures." },
-  { label: "🎧 Island + Audio Guide", goal: "Recommend the best island in the world with pictures AND an audio narration of the top picks." },
+  { label: "🚀 Product Launch", goal: "We launch our new app next Friday. Prepare the launch pack: a go-to-market brief, a budget spreadsheet, an investor pitch deck, and a launch announcement email." },
+  { label: "🚨 Customer Escalation", goal: "A customer sent a screenshot of a production error. Analyze the screenshot, estimate the impact, write an incident report, and create follow-up tasks." },
+  { label: "📊 Weekly Review", goal: "Search my emails and Drive files, read the metrics sheet, and write this week's business review document." },
+  { label: "📧 Email Summary", goal: "Search my inbox for recent emails and write a short summary of what I missed." },
+  // Travel & Lifestyle
+  { label: "🏝 Dream Trip", goal: "I want to visit the best island in the world. Recommend where to go and prepare a travel brief with an inspiring photo." },
+  { label: "🎧 Island + Audio Guide", goal: "Recommend the best island in the world — a written brief, a photo, and a spoken audio narration of the top picks." },
+  { label: "🗺 Kyoto in 3 Days", goal: "Plan 3 days in Kyoto: a travel guide document, a day-by-day slide deck, and an itemised budget spreadsheet in USD." },
   // Learning & Development
-  { label: "🤖 Learn AI", goal: "Prepare a comprehensive plan to learn AI in 2026, including resources and a study schedule." },
-  { label: "🎙️ Audio AI Briefing", goal: "Give me an audio briefing about the most important AI news this week." },
-  { label: "📈 Career Growth", goal: "Help me get promoted to senior engineer in 6 months. Create a skill development roadmap." },
+  { label: "🤖 Learn AI", goal: "Write me a practical plan to learn AI in 2026 — a single study-plan document with curated resources and a weekly schedule." },
+  { label: "🎙️ Audio AI Briefing", goal: "Give me an audio briefing about the most important AI developments this week." },
+  { label: "📈 Career Growth", goal: "Help me get promoted to senior engineer in 6 months. Write a skill-development roadmap." },
   // Personal Finance
-  { label: "🏠 House Down Payment", goal: "Create a budget plan to save for a house down payment. I earn $80k/year." },
-  { label: "💰 Wealth Strategy", goal: "How do I get rich? Give me an honest, research-based wealth building strategy." },
-  // Creative & Demo
-  { label: "👻 Ghost Run", goal: "Evaluate whether Ghost Run can succeed commercially and prepare everything I need for launch." },
-  { label: "📚 Short Story", goal: "Write a short story about time travel with character development and plot twists." },
+  { label: "🏠 House Down Payment", goal: "Create a budget plan to save for a house down payment. I earn $80k a year." },
+  { label: "💰 Wealth Strategy", goal: "How do I build wealth? Give me an honest, research-based strategy document." },
+  // Creative
+  { label: "👻 Commercial Viability", goal: "Evaluate whether a mobile game called Ghost Run can succeed commercially — a viability report, a market-research summary, and a one-page pitch." },
+  { label: "📚 Short Story", goal: "Write a short story about time travel with real character development and a plot twist, plus a concept image for the protagonist." },
 ];
 
 // Safe fetch wrapper so the UI never crashes if the backend is down
@@ -43,7 +43,7 @@ async function safeGet(url: string): Promise<any | null> {
 }
 
 export default function Home() {
-  const [goal, setGoal] = useState(SCENARIOS[5].goal); // Default: Dream Trip
+  const [goal, setGoal] = useState(SCENARIOS[6].goal); // Default: Kyoto in 3 Days
   const [intervention, setIntervention] = useState("");
   const [teach, setTeach] = useState("");
   const [mission, setMission] = useState<any>(null);

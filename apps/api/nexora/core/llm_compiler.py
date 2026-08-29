@@ -44,7 +44,42 @@ class LLMWorkflowCompiler:
         nodes = self._ensure_synthesis(goal, intent, constitution, attachment, nodes)
         # ADR-066: guarantee every required deliverable maps to a capability
         nodes = self._ensure_contract_coverage(intent, constitution, outcome_contract, nodes)
+        nodes = self._prune_uncovered(outcome_contract, nodes)
         return self._dedupe_refinements(nodes)
+
+    # Decorative capabilities that should only appear when a contract deliverable
+    # actually asks for that kind of output.
+    _GATED = {
+        "forms.create": ("form", "survey", "questionnaire", "poll"),
+        "calendar.create_event": ("meeting", "kickoff", "call", "session", "event", "schedule a"),
+        "chat.notify": ("notify", "announce", "message the team", "chat"),
+        "veo.generate_video": ("video", "clip", "trailer", "teaser"),
+        "lyria.generate_audio": ("audio", "narration", "podcast", "briefing", "voiceover", "music", "jingle"),
+        "imagen.generate_image": ("image", "photo", "picture", "visual", "mood board", "moodboard",
+                                  "illustration", "concept art", "inspiration"),
+        "gmail.send": ("email", "announcement", "outreach", "send"),
+        "gmail.draft": ("email", "announcement", "outreach", "draft"),
+    }
+
+    def _prune_uncovered(self, outcome_contract, nodes):
+        """Drop decorative nodes the goal never asked for (e.g. a Google Form for
+        a short-story goal). Research/search/synthesis nodes are never pruned."""
+        if not nodes or outcome_contract is None:
+            return nodes
+        blob = " ".join(str(x).lower() for x in
+                        (list(getattr(outcome_contract, "required_deliverables", []) or []) +
+                         list(getattr(outcome_contract, "success_criteria", []) or []) +
+                         [getattr(outcome_contract, "objective", "")]))
+        keep = []
+        for n in nodes:
+            terms = self._GATED.get(n.capability_id)
+            if terms and not any(t in blob for t in terms):
+                continue
+            keep.append(n)
+        kept_ids = {n.node_id for n in keep}
+        for n in keep:
+            n.depends_on = [d for d in n.depends_on if d in kept_ids]
+        return keep or nodes
 
     @staticmethod
     def _dedupe_refinements(nodes):
