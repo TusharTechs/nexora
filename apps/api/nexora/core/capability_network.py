@@ -39,8 +39,8 @@ class CapabilityNetwork:
         self._add("people.search", "Search People", "people", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0004, 500, False, "Search the directory.")
         self._add("forms.create", "Create Form", "forms", RiskLevel.LOW, ApprovalRequirement.NONE, 0.0008, 900, True, "Create a Google Form.")
         self._add("multimodal.analyze", "Analyze Screenshot", "gemini", RiskLevel.LOW, ApprovalRequirement.NONE, 0.002, 1200, False, "Gemini multimodal extraction from an image.")
-        self._add("veo.generate_video", "Generate Video", "veo", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.05, 8000, True, "Veo launch video.")
-        self._add("lyria.generate_audio", "Generate Audio", "lyria", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.02, 5000, True, "Lyria audio briefing.")
+        self._add("veo.generate_video", "Generate Video", "veo", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.20, 8000, True, "Generate a short cinematic video clip with Veo.")
+        self._add("lyria.generate_audio", "Generate Audio", "lyria", RiskLevel.MEDIUM, ApprovalRequirement.NONE, 0.02, 5000, True, "Produce a spoken audio briefing (Gemini TTS), or original music/a jingle (Lyria) when the goal asks for music.")
         self._add("imagen.generate_image", "Generate Image", "imagen", RiskLevel.LOW, ApprovalRequirement.NONE, 0.04, 2500, True, "Generate a photorealistic image from a text prompt using Vertex Imagen.")
         self._add("web.research", "Web Research", "web", RiskLevel.LOW,
                   ApprovalRequirement.NONE, 0.001, 2000, False,

@@ -17,7 +17,7 @@ class ConstitutionBuilder:
                     forbidden.append(cap)
         return MissionConstitution(
             mission_id=mission_id,
-            budget_usd=1.0,
+            budget_usd=2.0,
             forbidden_actions=forbidden,
             allowed_capabilities=self.network.ids(),
         )

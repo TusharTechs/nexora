@@ -336,11 +336,17 @@ class NodeExecutor:
             node.inputs["prompt"] = vp
             artifact = await provider.generate_video(mission_id, node.node_id, vp)
         elif node.capability_id == "lyria.generate_audio":
+            obj = self._objective(mission, node)
+            wants_music = any(w in obj.lower() for w in
+                              ("music", "jingle", "song", "soundtrack", "theme tune",
+                               "background track", "score"))
+            kind = "music" if wants_music else "speech"
             ap = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
-                kind="audio", objective=self._objective(mission, node),
+                kind=("music" if wants_music else "audio"), objective=obj,
                 evidence_text=self._summarize_upstream(mission, node))
             node.inputs["prompt"] = ap
-            artifact = await provider.generate_audio(mission_id, node.node_id, ap)
+            node.inputs["audio_kind"] = kind
+            artifact = await provider.generate_audio(mission_id, node.node_id, ap, kind=kind)
         elif node.capability_id == "web.research":
             result_dict = await provider.web_research(
                 node.inputs.get("objective", node.inputs.get("query", "")),

@@ -622,7 +622,7 @@ class LiveWorkspaceProvider:
         creds = await self._get_credentials()
         loc = os.getenv("GCP_LOCATION", "us-central1")
         proj = os.getenv("GCP_PROJECT_ID", "")
-        model = os.getenv("NEXORA_VIDEO_MODEL", "veo-3.0-generate-001")
+        model = os.getenv("NEXORA_VIDEO_MODEL", "veo-3.1-fast-generate-001")
         base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/publishers/google/models/{model}"
 
         def _generate() -> bytes:
@@ -675,54 +675,94 @@ class LiveWorkspaceProvider:
         return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
                         type="VIDEO", provider="live", resource_id=fid, uri=uri, prompt=prompt)
 
-    async def generate_audio(self, mission_id: str, node_id: str, prompt: str) -> Artifact:
-        """Generate a real audio clip via Vertex Lyria and upload it to the mission Drive folder.
+    @staticmethod
+    def _pcm_to_wav(pcm: bytes, rate: int = 24000, channels: int = 1, width: int = 2) -> bytes:
+        import io as _io, wave
+        buf = _io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(channels)
+            w.setsampwidth(width)
+            w.setframerate(rate)
+            w.writeframes(pcm)
+        return buf.getvalue()
 
-        Uses ~$0.02-0.05 per clip. Model is configurable via NEXORA_AUDIO_MODEL env var.
-        Falls back to mock audio if Vertex is unavailable or the call fails.
+    async def generate_audio(self, mission_id: str, node_id: str, prompt: str,
+                             kind: str = "speech") -> Artifact:
+        """Produce a real audio file for the mission Drive folder.
+
+        kind="speech" (default) — spoken narration via Gemini TTS (NEXORA_TTS_MODEL).
+        kind="music"            — original music/jingle via Vertex Lyria (NEXORA_AUDIO_MODEL).
+        Falls back to a mock audio artifact if the model call fails.
         """
-        creds = await self._get_credentials()
-        loc = os.getenv("GCP_LOCATION", "us-central1")
         proj = os.getenv("GCP_PROJECT_ID", "")
-        model = os.getenv("NEXORA_AUDIO_MODEL", "lyria-02")
 
-        # Lyria 2 uses the predict endpoint
-        url = (f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/"
-               f"publishers/google/models/{model}:predict")
+        if kind != "music":
+            model = os.getenv("NEXORA_TTS_MODEL", "gemini-2.5-flash-tts")
+            voice = os.getenv("NEXORA_TTS_VOICE", "Kore")
 
-        def _generate() -> tuple:
-            import httpx as _httpx
-            r = _httpx.post(
-                url,
-                headers={"Authorization": f"Bearer {creds.token}"},
-                json={
-                    "instances": [{"text": prompt}],
-                    "parameters": {"sampleCount": 1}
-                },
-                timeout=120,
-                verify=not _insecure_tls()
-            )
-            r.raise_for_status()
-            data = r.json()
-            pred = data["predictions"][0]
-            audio_bytes = base64.b64decode(pred["bytesBase64Encoded"])
-            mime = pred.get("mimeType", "audio/wav")
-            return audio_bytes, mime
+            def _tts() -> tuple:
+                from google.genai import types
+                from nexora.core.llm_client import genai_client
+                client = genai_client()
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=("Read this briefing aloud in a clear, warm, professional "
+                              f"voice:\n\n{prompt}"),
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name=voice)))))
+                for p in resp.candidates[0].content.parts:
+                    inline = getattr(p, "inline_data", None)
+                    if inline and inline.data:
+                        pcm, mime = inline.data, (inline.mime_type or "")
+                        if "pcm" in mime or "L16" in mime:
+                            rate = 24000
+                            for tok in mime.split(";"):
+                                if "rate=" in tok:
+                                    rate = int(tok.split("=")[1])
+                            return self._pcm_to_wav(pcm, rate=rate), "audio/wav"
+                        return pcm, (mime or "audio/wav")
+                raise RuntimeError("TTS returned no audio part")
 
-        try:
-            audio_bytes, mime = await asyncio.to_thread(_generate)
-        except Exception as e:
-            _log.warning(f"Vertex Lyria failed: {e}. Falling back to mock audio.")
-            from nexora.providers.mock_workspace import MockWorkspaceProvider
-            return await MockWorkspaceProvider().generate_audio(mission_id, node_id, prompt)
+            try:
+                audio_bytes, mime = await asyncio.to_thread(_tts)
+            except Exception as e:
+                _log.warning(f"Gemini TTS failed: {e}. Falling back to mock audio.")
+                from nexora.providers.mock_workspace import MockWorkspaceProvider
+                return await MockWorkspaceProvider().generate_audio(mission_id, node_id, prompt)
+        else:
+            creds = await self._get_credentials()
+            loc = os.getenv("GCP_LOCATION", "us-central1")
+            model = os.getenv("NEXORA_AUDIO_MODEL", "lyria-002")
+            url = (f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/"
+                   f"publishers/google/models/{model}:predict")
+
+            def _lyria() -> tuple:
+                import httpx as _httpx
+                r = _httpx.post(url, headers={"Authorization": f"Bearer {creds.token}"},
+                                json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
+                                timeout=120, verify=not _insecure_tls())
+                r.raise_for_status()
+                pred = r.json()["predictions"][0]
+                return base64.b64decode(pred["bytesBase64Encoded"]), pred.get("mimeType", "audio/wav")
+
+            try:
+                audio_bytes, mime = await asyncio.to_thread(_lyria)
+            except Exception as e:
+                _log.warning(f"Vertex Lyria failed: {e}. Falling back to mock audio.")
+                from nexora.providers.mock_workspace import MockWorkspaceProvider
+                return await MockWorkspaceProvider().generate_audio(mission_id, node_id, prompt)
 
         # Upload to the mission folder
         drive = await self._build_service('drive', 'v3')
         ext = "mp3" if "mp3" in mime else "wav"
 
         def _upload():
-            safe_name = "".join(c for c in prompt[:40] if c.isalnum() or c in " -_").strip()
-            filename = f"NEXORA Audio - {safe_name or 'briefing'}.{ext}"
+            label = "Music" if kind == "music" else "Briefing"
+            filename = f"NEXORA {label} - {mission_id[:8]}.{ext}"
             parents = [self._folder_id] if self._folder_id and self._folder_id != "root" else []
             meta = {"name": filename, "parents": parents}
             media = MediaIoBaseUpload(io.BytesIO(audio_bytes), mimetype=mime)

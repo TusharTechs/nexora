@@ -191,12 +191,12 @@ class MockWorkspaceProvider:
         return self._art("VIDEO", self._videos, mission_id, node_id,
                          prompt=enriched_prompt, persona=persona.role)
 
-    async def generate_audio(self, mission_id, node_id, prompt) -> Artifact:
+    async def generate_audio(self, mission_id, node_id, prompt, kind: str = "speech") -> Artifact:
         await self._enter("lyria.generate_audio")
         persona = persona_for_capability("lyria.generate_audio")
-        enriched_prompt = f"[{persona.role}] {prompt}"
+        enriched_prompt = f"[{persona.role}] ({kind}) {prompt}"
         return self._art("AUDIO", self._audios, mission_id, node_id,
-                         prompt=enriched_prompt, persona=persona.role)
+                         prompt=enriched_prompt, kind=kind, persona=persona.role)
 
     # ---- Phase 10: Image Generation (mock) ----
     async def generate_image(self, mission_id, node_id, prompt) -> Artifact:
