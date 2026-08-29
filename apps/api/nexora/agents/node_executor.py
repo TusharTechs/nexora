@@ -4,6 +4,8 @@ from nexora.core.policy_engine import PolicyEngine
 from nexora.core.capability_network import CapabilityNetwork
 from nexora.core.security import ContentFirewall
 from nexora.core.audit import AuditTrail, AuditEntry, AuditKind
+from nexora.core.composer import ArtifactComposer
+from nexora.core.personas import persona_for_capability
 from nexora.providers.protocols import ProviderRegistry
 
 
@@ -14,23 +16,49 @@ class ApprovalRequiredError(Exception):
 
 
 class NodeExecutor:
-    def __init__(self, policy, network, registry, firewall, audit):
+    def __init__(self, policy, network, registry, firewall, audit, composer=None):
         self.policy = policy
         self.network = network
         self.registry = registry
         self.firewall = firewall
         self.audit = audit
+        self.composer = composer or ArtifactComposer()
 
-    def _summarize_upstream(self, mission, node) -> str:
+    @staticmethod
+    def _objective(mission, node) -> str:
+        if mission and getattr(mission, "intent", None) and mission.intent.objective:
+            return mission.intent.objective
+        if mission and getattr(mission, "goal", None):
+            return mission.goal
+        return node.inputs.get("title") or node.inputs.get("objective") or ""
+
+    @staticmethod
+    def _summarize_upstream(mission, node) -> str:
         """Build doc content from upstream search/research outputs (Phase 9)."""
         if mission is None:
             return node.inputs.get("content") or ""
 
-        # Use declared deps; if none, scan all other nodes for data
-        deps = node.depends_on or []
-        sources = [n for n in mission.nodes if n.node_id in deps]
+        # Prefer declared deps, but ALWAYS fold in every search/research/analysis
+        # output anywhere in the mission — synthesis nodes must never miss evidence
+        # just because the planner wired a narrow dependency.
+        deps = set(node.depends_on or [])
+        dep_nodes = [n for n in mission.nodes if n.node_id in deps]
+        evidence_nodes = [n for n in mission.nodes
+                          if n.node_id != node.node_id and (
+                              n.node_id in deps or
+                              n.capability_id in {"gmail.search", "drive.search", "web.research",
+                                                  "multimodal.analyze", "sheets.read", "people.search"})]
+        sources = dep_nodes + [n for n in evidence_nodes if n not in dep_nodes]
         if not sources:
             sources = [n for n in mission.nodes if n.node_id != node.node_id]
+
+        # Which emails did the firewall quarantine? Never feed those to synthesis.
+        quarantined = set()
+        for n in mission.nodes:
+            fw = (n.outputs or {}).get("search_results_firewall", {})
+            for pm in fw.get("per_message", []) or []:
+                if pm.get("quarantined"):
+                    quarantined.add(pm.get("id"))
 
         lines = []
         for dep in sources:
@@ -38,6 +66,8 @@ class NodeExecutor:
 
             # Gmail / Drive search results
             for item in outs.get("search_results", []) or []:
+                if item.get("id") in quarantined:
+                    continue
                 subj = item.get("subject") or item.get("title") or item.get("name") or "Result"
                 snip = item.get("snippet") or item.get("body") or ""
                 lines.append(f"• {subj}\n  {str(snip)[:300]}")
@@ -45,10 +75,28 @@ class NodeExecutor:
             # Web research findings
             research = outs.get("research")
             if isinstance(research, dict):
+                if research.get("summary"):
+                    lines.append(f"• Research summary: {str(research['summary'])[:400]}")
                 for f in research.get("findings", []) or []:
-                    title = f.get("title") or f.get("url") or "Finding"
+                    claim = f.get("claim") or f.get("title") or f.get("url") or "Finding"
+                    src = f.get("source_url") or f.get("url") or ""
                     snip = f.get("snippet") or f.get("summary") or ""
-                    lines.append(f"• {title}\n  {str(snip)[:300]}")
+                    lines.append(f"• {claim}\n  {str(snip)[:250]}\n  Source: {src}")
+
+            # Vision / screenshot analysis
+            analysis = outs.get("analysis")
+            if isinstance(analysis, dict) and analysis:
+                lines.append(f"• Screenshot analysis: error_code={analysis.get('error_code')} "
+                             f"{str(analysis.get('summary') or analysis.get('visual_evidence') or '')[:200]}")
+
+            # Directory lookups
+            for p in outs.get("people", []) or []:
+                lines.append(f"• Contact: {p.get('name')} <{p.get('email')}> — {p.get('role')}")
+
+            # Spreadsheet reads
+            rows = outs.get("rows")
+            if isinstance(rows, list) and rows:
+                lines.append("• Sheet data: " + "; ".join(str(r) for r in rows[:8]))
 
             # Single email read
             email = outs.get("email") or {}
@@ -92,10 +140,18 @@ class NodeExecutor:
         action = node.capability_id
 
         if node.capability_id == "docs.create":
-            # Phase 9: enrich doc content from upstream search/research outputs
-            content = self._summarize_upstream(mission, node)
-            artifact = await provider.create_document(mission_id, node.node_id,
-                node.inputs.get("title", "Doc"), content)
+            # ADR-066: Gemini writes the real document body from the persona,
+            # the Outcome Contract, and upstream research evidence.
+            evidence_text = self._summarize_upstream(mission, node)
+            title = node.inputs.get("title", "Document")
+            content = await self.composer.compose_document(
+                title=title, objective=self._objective(mission, node),
+                persona=persona_for_capability("docs.create"),
+                contract=getattr(mission, "outcome_contract", None) if mission else None,
+                evidence_text=evidence_text)
+            node.outputs["content_preview"] = content[:600]
+            node.outputs["content_chars"] = len(content)
+            artifact = await provider.create_document(mission_id, node.node_id, title, content)
 
         elif node.capability_id == "gmail.search":
             results = await provider.search_emails(node.inputs.get("query", ""), node.inputs.get("max_results", 5))
@@ -156,8 +212,53 @@ class NodeExecutor:
             node.outputs["search_results"] = await provider.search_files(node.inputs.get("query", ""))
         elif node.capability_id == "drive.read":
             node.outputs["file"] = await provider.read_file(node.inputs.get("file_id", ""))
+        elif node.capability_id == "drive.create_folder":
+            if hasattr(provider, "ensure_workspace"):
+                ws = await provider.ensure_workspace(node.inputs.get("title", "NEXORA Folder"))
+                node.outputs["folder"] = ws
+        elif node.capability_id == "docs.read":
+            fid = node.inputs.get("file_id") or node.inputs.get("doc_id") or ""
+            try:
+                node.outputs["file"] = await provider.read_file(fid) if fid else {"content": ""}
+            except Exception:
+                node.outputs["file"] = {"content": ""}
+        elif node.capability_id == "docs.update":
+            # Append composed content to an upstream doc; if none, behaves like docs.create.
+            evidence_text = self._summarize_upstream(mission, node)
+            title = node.inputs.get("title", "Document")
+            content = await self.composer.compose_document(
+                title=title, objective=self._objective(mission, node),
+                persona=persona_for_capability("docs.create"),
+                contract=getattr(mission, "outcome_contract", None) if mission else None,
+                evidence_text=evidence_text)
+            node.outputs["content_preview"] = content[:600]
+            artifact = await provider.create_document(mission_id, node.node_id, title, content)
+        elif node.capability_id == "sheets.write":
+            composed = await self.composer.compose_sheet(
+                title=node.inputs.get("title", "Spreadsheet"),
+                objective=self._objective(mission, node),
+                persona=persona_for_capability("sheets.create"),
+                contract=getattr(mission, "outcome_contract", None) if mission else None,
+                evidence_text=self._summarize_upstream(mission, node),
+                headers=node.inputs.get("headers") or None)
+            node.outputs["sheet_rows"] = composed["rows"]
+            artifact = await provider.create_sheet(
+                mission_id, node.node_id, node.inputs.get("title", "Spreadsheet"),
+                composed["headers"], rows=composed["rows"])
+        elif node.capability_id in ("calendar.search", "calendar.availability"):
+            node.outputs["events"] = []
+            node.outputs["available"] = True
         elif node.capability_id == "sheets.create":
-            artifact = await provider.create_sheet(mission_id, node.node_id, node.inputs.get("title", "Sheet"), node.inputs.get("headers", []))
+            title = node.inputs.get("title", "Spreadsheet")
+            composed = await self.composer.compose_sheet(
+                title=title, objective=self._objective(mission, node),
+                persona=persona_for_capability("sheets.create"),
+                contract=getattr(mission, "outcome_contract", None) if mission else None,
+                evidence_text=self._summarize_upstream(mission, node),
+                headers=node.inputs.get("headers") or None)
+            node.outputs["sheet_rows"] = composed["rows"]
+            artifact = await provider.create_sheet(
+                mission_id, node.node_id, title, composed["headers"], rows=composed["rows"])
         elif node.capability_id == "sheets.read":
             node.outputs["rows"] = await provider.read_sheet(node.inputs.get("sheet_id", ""), node.inputs.get("range", ""))
         elif node.capability_id == "calendar.create_event":
@@ -165,7 +266,14 @@ class NodeExecutor:
         elif node.capability_id == "tasks.create":
             artifact = await provider.create_task(mission_id, node.node_id, node.inputs.get("title", "Task"), node.inputs.get("notes", ""))
         elif node.capability_id == "slides.create":
-            artifact = await provider.create_slides(mission_id, node.node_id, node.inputs.get("title", "Deck"), node.inputs.get("slides", []))
+            title = node.inputs.get("title", "Presentation")
+            deck = await self.composer.compose_slides(
+                title=title, objective=self._objective(mission, node),
+                persona=persona_for_capability("slides.create"),
+                contract=getattr(mission, "outcome_contract", None) if mission else None,
+                evidence_text=self._summarize_upstream(mission, node))
+            node.outputs["slide_count"] = len(deck)
+            artifact = await provider.create_slides(mission_id, node.node_id, title, deck)
         elif node.capability_id == "chat.notify":
             artifact = await provider.send_chat(node.inputs.get("space", "general"), node.inputs.get("text", ""))
         elif node.capability_id == "people.search":
@@ -178,9 +286,17 @@ class NodeExecutor:
             artifact = result["artifact"]
             node.rationale_summary += f" [extracted error_code={result['error_code']}]"
         elif node.capability_id == "veo.generate_video":
-            artifact = await provider.generate_video(mission_id, node.node_id, node.inputs.get("prompt", ""))
+            vp = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
+                kind="video", objective=self._objective(mission, node),
+                evidence_text=self._summarize_upstream(mission, node))
+            node.inputs["prompt"] = vp
+            artifact = await provider.generate_video(mission_id, node.node_id, vp)
         elif node.capability_id == "lyria.generate_audio":
-            artifact = await provider.generate_audio(mission_id, node.node_id, node.inputs.get("prompt", ""))
+            ap = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
+                kind="audio", objective=self._objective(mission, node),
+                evidence_text=self._summarize_upstream(mission, node))
+            node.inputs["prompt"] = ap
+            artifact = await provider.generate_audio(mission_id, node.node_id, ap)
         elif node.capability_id == "web.research":
             result_dict = await provider.web_research(
                 node.inputs.get("objective", node.inputs.get("query", "")),
@@ -197,7 +313,11 @@ class NodeExecutor:
             )
             node.rationale_summary += f" [found {result_dict.get('sources_cited', 0)} cited findings]"
         elif node.capability_id == "imagen.generate_image":
-            artifact = await provider.generate_image(mission_id, node.node_id, node.inputs.get("prompt", ""))
+            ip = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
+                kind="image", objective=self._objective(mission, node),
+                evidence_text=self._summarize_upstream(mission, node))
+            node.inputs["prompt"] = ip
+            artifact = await provider.generate_image(mission_id, node.node_id, ip)
             node.rationale_summary += " [image generated]"
         else:
             raise ValueError(f"No executor route for {node.capability_id}")

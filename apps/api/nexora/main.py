@@ -38,7 +38,13 @@ from nexora.providers.protocols import ProviderRegistry
 from nexora.benchmarks import BENCHMARKS, evaluate_mission
 
 app = FastAPI(title="NEXORA API")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
+
+# Allowed browser origins: localhost for dev plus anything in CORS_ORIGINS
+# (comma-separated) for the deployed frontend.
+_cors = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_cors += [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_cors,
+                   allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 repo = build_repository()
@@ -89,6 +95,13 @@ async def _get_or_404(mission_id: str) -> Mission:
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
     return mission
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok", "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
+            "repo": os.getenv("NEXORA_REPO", "memory"),
+            "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
 
 
 @app.on_event("startup")

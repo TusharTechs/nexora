@@ -5,7 +5,7 @@ import TechnicalDetails from "@/components/TechnicalDetails";
 import WhyModal from "@/components/WhyModal";
 import { useVoice } from "@/hooks/useVoice";
 
-const API = "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TERMINAL = ["COMPLETED", "FAILED", "PARTIAL_SUCCESS"];
 
 // Phase 12: Expanded scenario library covering all goal types
@@ -92,7 +92,7 @@ export default function Home() {
     const mid = mission.mission_id;
     let poll: any = null; let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket(`ws://localhost:8000/api/v1/missions/${mid}/ws`);
+      ws = new WebSocket(`${API.replace(/^http/, "ws")}/api/v1/missions/${mid}/ws`);
       ws.onmessage = () => refresh(mid);
       ws.onerror = () => { poll = setInterval(() => refresh(mid), 1500); };
     } catch { poll = setInterval(() => refresh(mid), 1500); }

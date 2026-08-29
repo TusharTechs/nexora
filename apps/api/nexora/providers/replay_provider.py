@@ -22,23 +22,39 @@ class ReplayProvider:
                         type=atype, provider="replay", resource_id="replay",
                         uri=f"replay://{cap}")
 
-    async def create_document(self, mission_id, node_id, title, content) -> Artifact:
+    async def create_document(self, mission_id, node_id, title, content, **kw) -> Artifact:
         return self._pop("docs.create", mission_id, node_id, "DOC")
 
-    async def send_email(self, to, subject, body) -> Artifact:
+    async def send_email(self, to, subject, body, **kw) -> Artifact:
         return self._pop("gmail.send", mission_id="-", node_id="-", atype="EMAIL")
 
-    async def draft_email(self, to, subject, body) -> Artifact:
+    async def draft_email(self, to, subject, body, **kw) -> Artifact:
         return self._pop("gmail.draft", mission_id="-", node_id="-", atype="DRAFT")
 
-    async def create_sheet(self, mission_id, node_id, title, headers) -> Artifact:
+    async def create_sheet(self, mission_id, node_id, title, headers, rows=None, **kw) -> Artifact:
         return self._pop("sheets.create", mission_id, node_id, "SHEET")
 
-    async def create_event(self, mission_id, node_id, title, attendees) -> Artifact:
+    async def create_slides(self, mission_id, node_id, title, slides, **kw) -> Artifact:
+        return self._pop("slides.create", mission_id, node_id, "SLIDES")
+
+    async def create_event(self, mission_id, node_id, title, attendees, **kw) -> Artifact:
         return self._pop("calendar.create_event", mission_id, node_id, "EVENT")
 
-    async def create_task(self, mission_id, node_id, title, notes) -> Artifact:
+    async def create_task(self, mission_id, node_id, title, notes, **kw) -> Artifact:
         return self._pop("tasks.create", mission_id, node_id, "TASK")
+
+    async def web_research(self, objective, max_results: int = 5) -> dict:
+        return self._out.get("web.research", {}).get("research", {
+            "objective": objective, "findings": [], "summary": "", "sources_cited": 0})
+
+    async def generate_image(self, mission_id, node_id, prompt, **kw) -> Artifact:
+        return self._pop("imagen.generate_image", mission_id, node_id, "IMAGE")
+
+    async def generate_video(self, mission_id, node_id, prompt, **kw) -> Artifact:
+        return self._pop("veo.generate_video", mission_id, node_id, "VIDEO")
+
+    async def generate_audio(self, mission_id, node_id, prompt, **kw) -> Artifact:
+        return self._pop("lyria.generate_audio", mission_id, node_id, "AUDIO")
 
     async def search_emails(self, query, max_results):
         return self._out.get("gmail.search", {}).get("search_results", [])

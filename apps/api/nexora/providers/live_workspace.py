@@ -257,7 +257,8 @@ class LiveWorkspaceProvider:
                         type="DOC", provider="live", resource_id=doc_id, uri=uri)
 
     # ---------------- Google Sheets ----------------
-    async def create_sheet(self, mission_id: str, node_id: str, title: str, headers: List[str]) -> Artifact:
+    async def create_sheet(self, mission_id: str, node_id: str, title: str,
+                           headers: List[str], rows: Optional[List[List]] = None) -> Artifact:
         service = await self._build_service('sheets', 'v4')
         drive_service = await self._build_service('drive', 'v3')
 
@@ -265,12 +266,26 @@ class LiveWorkspaceProvider:
             sheet = service.spreadsheets().create(body={'properties': {'title': title}}).execute()
             sheet_id = sheet['spreadsheetId']
 
+            values = []
             if headers:
+                values.append([str(h) for h in headers])
+            for r in (rows or []):
+                values.append([("" if c is None else str(c)) for c in r])
+            if values:
                 service.spreadsheets().values().update(
                     spreadsheetId=sheet_id, range="A1",
-                    valueInputOption="RAW",
-                    body={"values": [headers]}
+                    valueInputOption="USER_ENTERED",
+                    body={"values": values}
                 ).execute()
+                # Bold the header row
+                try:
+                    service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": [
+                        {"repeatCell": {
+                            "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1},
+                            "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                            "fields": "userEnteredFormat.textFormat.bold"}}]}).execute()
+                except Exception:
+                    pass
 
             if self._folder_id and self._folder_id != "root":
                 file = drive_service.files().get(fileId=sheet_id, fields='parents').execute()
@@ -401,24 +416,250 @@ class LiveWorkspaceProvider:
         # For LIVE mode, if we have a URI, it exists
         return bool(artifact.uri)
 
-    # Stubs for capabilities not fully implemented in Live mode yet
+    # ---------------- Google Slides ----------------
+    async def create_slides(self, mission_id: str, node_id: str, title: str, slides) -> Artifact:
+        service = await self._build_service('slides', 'v1')
+        drive_service = await self._build_service('drive', 'v3')
+
+        # Normalise: accept list[str] or list[{title, bullets}]
+        deck = []
+        for s in (slides or []):
+            if isinstance(s, dict):
+                deck.append((str(s.get("title", "")), [str(b) for b in (s.get("bullets") or [])]))
+            else:
+                deck.append((str(s), []))
+        if not deck:
+            deck = [(title, [])]
+
+        def _create():
+            pres = service.presentations().create(body={'title': title}).execute()
+            pres_id = pres['presentationId']
+            # Remove the default first slide, then add ours
+            requests = []
+            existing = pres.get('slides', [])
+            for idx, (stitle, bullets) in enumerate(deck):
+                sid = f"slide_{idx}"
+                body_id = f"body_{idx}"
+                requests.append({"createSlide": {
+                    "objectId": sid,
+                    "slideLayoutReference": {"predefinedLayout": "TITLE_AND_BODY"},
+                    "placeholderIdMappings": [
+                        {"layoutPlaceholder": {"type": "TITLE"}, "objectId": f"title_{idx}"},
+                        {"layoutPlaceholder": {"type": "BODY"}, "objectId": body_id},
+                    ]}})
+                requests.append({"insertText": {"objectId": f"title_{idx}", "text": stitle[:180]}})
+                if bullets:
+                    requests.append({"insertText": {"objectId": body_id,
+                                                    "text": "\n".join(f"• {b}" for b in bullets)[:2000]}})
+            if existing:
+                requests.append({"deleteObject": {"objectId": existing[0]['objectId']}})
+            service.presentations().batchUpdate(
+                presentationId=pres_id, body={"requests": requests}).execute()
+
+            if self._folder_id and self._folder_id != "root":
+                f = drive_service.files().get(fileId=pres_id, fields='parents').execute()
+                drive_service.files().update(
+                    fileId=pres_id, addParents=self._folder_id,
+                    removeParents=",".join(f.get('parents', [])), fields='id').execute()
+            meta = drive_service.files().get(fileId=pres_id, fields='webViewLink').execute()
+            return pres_id, meta.get('webViewLink', f"https://docs.google.com/presentation/d/{pres_id}")
+
+        try:
+            pres_id, uri = await asyncio.to_thread(_create)
+        except Exception as e:
+            print(f"Slides creation failed: {e}. Falling back to mock deck.")
+            from nexora.providers.mock_workspace import MockWorkspaceProvider
+            return await MockWorkspaceProvider().create_slides(mission_id, node_id, title, slides)
+        return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
+                        type="SLIDES", provider="live", resource_id=pres_id, uri=uri)
+
+    # ---------------- Google Tasks ----------------
+    async def create_task(self, mission_id, node_id, title, notes):
+        try:
+            service = await self._build_service('tasks', 'v1')
+
+            def _create():
+                lists = service.tasklists().list(maxResults=1).execute().get('items', [])
+                tasklist_id = lists[0]['id'] if lists else '@default'
+                t = service.tasks().insert(tasklist=tasklist_id,
+                                           body={'title': title[:1024], 'notes': (notes or '')[:8000]}).execute()
+                return t['id']
+            task_id = await asyncio.to_thread(_create)
+            return self._art("TASK", task_id, "https://tasks.google.com/", title=title)
+        except Exception as e:
+            print(f"Tasks create failed: {e}. Falling back to mock.")
+            from nexora.providers.mock_workspace import MockWorkspaceProvider
+            return await MockWorkspaceProvider().create_task(mission_id, node_id, title, notes)
+
+    # ---------------- Directory / People ----------------
+    async def search_people(self, query: str) -> List[Dict]:
+        try:
+            service = await self._build_service('people', 'v1')
+
+            def _search():
+                res = service.people().searchContacts(
+                    query=query[:100],
+                    readMask="names,emailAddresses,organizations").execute()
+                out = []
+                for r in res.get('results', []):
+                    p = r.get('person', {})
+                    names = p.get('names', [{}])
+                    emails = p.get('emailAddresses', [{}])
+                    orgs = p.get('organizations', [{}])
+                    out.append({
+                        "name": names[0].get('displayName', 'Unknown') if names else 'Unknown',
+                        "email": emails[0].get('value', '') if emails else '',
+                        "role": orgs[0].get('title', '') if orgs else '',
+                    })
+                return out
+            people = await asyncio.to_thread(_search)
+            return people or [{"name": "No directory matches", "email": "", "role": ""}]
+        except Exception as e:
+            print(f"People search failed: {e}. Falling back to mock.")
+            from nexora.providers.mock_workspace import MockWorkspaceProvider
+            return await MockWorkspaceProvider().search_people(query)
+
+    # ---------------- Gmail read ----------------
+    async def read_email(self, message_id: str) -> Dict:
+        try:
+            service = await self._build_service('gmail', 'v1')
+
+            def _read():
+                msg = service.users().messages().get(userId='me', id=message_id, format='full').execute()
+                headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+                body = ""
+                payload = msg.get('payload', {})
+                for part in payload.get('parts', [payload]):
+                    if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
+                        body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+                        break
+                return {"id": message_id, "subject": headers.get('Subject', ''),
+                        "from": headers.get('From', ''), "body": body,
+                        "snippet": msg.get('snippet', '')}
+            return await asyncio.to_thread(_read)
+        except Exception as e:
+            return {"id": message_id, "body": f"(read failed: {e})"}
+
+    async def read_sheet(self, sheet_id: str, range_: str) -> List[List]:
+        try:
+            service = await self._build_service('sheets', 'v4')
+
+            def _read():
+                res = service.spreadsheets().values().get(
+                    spreadsheetId=sheet_id, range=range_ or "A1:Z100").execute()
+                return res.get('values', [])
+            return await asyncio.to_thread(_read)
+        except Exception as e:
+            print(f"Sheet read failed: {e}")
+            return []
+
+    # ---------------- Gemini Vision ----------------
     async def analyze_attachment(self, mission_id, node_id, attachment):
-        # Fallback to mock vision for now (or could integrate Gemini Vision API here)
+        attachment = attachment or {}
+        img_bytes = None
+        raw = attachment.get("bytes") or attachment.get("data")
+        if raw:
+            try:
+                img_bytes = base64.b64decode(raw) if isinstance(raw, str) else raw
+            except Exception:
+                img_bytes = None
+        text_hint = attachment.get("text", "")
+        try:
+            from google import genai
+            from google.genai import types
+            key = os.getenv("GEMINI_API_KEY", "")
+            model = os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
+            if key and img_bytes:
+                client = genai.Client(api_key=key)
+                prompt = ("Analyze this screenshot/image. Extract any error codes, stack traces, "
+                          "UI state, and what the user is seeing. Return JSON: "
+                          '{"error_code": "...", "summary": "...", "visual_evidence": "..."}')
+                resp = await client.aio.models.generate_content(
+                    model=model,
+                    contents=[types.Part.from_bytes(data=img_bytes, mime_type=attachment.get("type", "image/png")),
+                              prompt])
+                txt = resp.text or ""
+                import json as _json, re as _re
+                m = _re.search(r"\{.*\}", txt, _re.S)
+                parsed = _json.loads(m.group(0)) if m else {}
+                error_code = parsed.get("error_code") or "UNKNOWN"
+                art = Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
+                               type="ANALYSIS", provider="live", resource_id=f"vision_{node_id}",
+                               uri=f"vision://{node_id}")
+                return {"error_code": error_code,
+                        "timestamp": "", "visual_evidence": parsed.get("visual_evidence", txt[:400]),
+                        "summary": parsed.get("summary", ""), "analyzed_by": "Gemini Vision",
+                        "artifact": art}
+        except Exception as e:
+            print(f"Gemini Vision failed: {e}. Falling back to mock analysis.")
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().analyze_attachment(mission_id, node_id, attachment)
-
-    async def create_task(self, mission_id, node_id, title, notes):
-        # Fallback to mock
-        from nexora.providers.mock_workspace import MockWorkspaceProvider
-        return await MockWorkspaceProvider().create_task(mission_id, node_id, title, notes)
 
     async def send_chat(self, space, text):
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().send_chat(space, text)
 
-    async def generate_video(self, mission_id, node_id, prompt):
+    async def create_form(self, mission_id, node_id, title, questions):
         from nexora.providers.mock_workspace import MockWorkspaceProvider
-        return await MockWorkspaceProvider().generate_video(mission_id, node_id, prompt)
+        return await MockWorkspaceProvider().create_form(mission_id, node_id, title, questions)
+
+    # ---------------- Vertex Veo ----------------
+    async def generate_video(self, mission_id, node_id, prompt):
+        creds = await self._get_credentials()
+        loc = os.getenv("GCP_LOCATION", "us-central1")
+        proj = os.getenv("GCP_PROJECT_ID", "")
+        model = os.getenv("NEXORA_VIDEO_MODEL", "veo-3.0-generate-001")
+        base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/publishers/google/models/{model}"
+
+        def _generate() -> bytes:
+            import time as _t
+            import httpx as _httpx
+            with _httpx.Client(timeout=120, verify=not _insecure_tls()) as c:
+                r = c.post(f"{base}:predictLongRunning",
+                           headers={"Authorization": f"Bearer {creds.token}"},
+                           json={"instances": [{"prompt": prompt}],
+                                 "parameters": {"sampleCount": 1, "durationSeconds": 6}})
+                r.raise_for_status()
+                op = r.json().get("name")
+                for _ in range(30):
+                    _t.sleep(10)
+                    poll = c.post(f"{base}:fetchPredictOperation",
+                                  headers={"Authorization": f"Bearer {creds.token}"},
+                                  json={"operationName": op})
+                    poll.raise_for_status()
+                    pj = poll.json()
+                    if pj.get("done"):
+                        vids = pj.get("response", {}).get("videos") or pj.get("response", {}).get("predictions", [])
+                        b64 = vids[0].get("bytesBase64Encoded") or vids[0].get("video", {}).get("bytesBase64Encoded")
+                        return base64.b64decode(b64)
+                raise TimeoutError("Veo generation timed out")
+
+        try:
+            video_bytes = await asyncio.to_thread(_generate)
+        except Exception as e:
+            print(f"Vertex Veo failed: {e}. Falling back to mock video.")
+            from nexora.providers.mock_workspace import MockWorkspaceProvider
+            return await MockWorkspaceProvider().generate_video(mission_id, node_id, prompt)
+
+        drive = await self._build_service('drive', 'v3')
+
+        def _upload():
+            safe = "".join(c for c in prompt[:40] if c.isalnum() or c in " -_").strip()
+            parents = [self._folder_id] if self._folder_id and self._folder_id != "root" else []
+            media = MediaIoBaseUpload(io.BytesIO(video_bytes), mimetype="video/mp4")
+            f = drive.files().create(body={"name": f"NEXORA Video - {safe or 'clip'}.mp4", "parents": parents},
+                                     media_body=media, fields="id, webViewLink").execute()
+            return f["id"], f.get("webViewLink", f"https://drive.google.com/file/d/{f['id']}/view")
+
+        try:
+            fid, uri = await asyncio.to_thread(_upload)
+        except Exception as e:
+            print(f"Drive video upload failed: {e}")
+            return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
+                            type="VIDEO", provider="live", resource_id="upload_failed",
+                            uri="drive://upload_failed", prompt=prompt)
+        return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
+                        type="VIDEO", provider="live", resource_id=fid, uri=uri, prompt=prompt)
 
     async def generate_audio(self, mission_id: str, node_id: str, prompt: str) -> Artifact:
         """Generate a real audio clip via Vertex Lyria and upload it to the mission Drive folder.

@@ -1,0 +1,227 @@
+"""Artifact Composer — turns a plan node into real, content-rich deliverables (ADR-066).
+
+NEXORA's earlier providers created *structurally* valid artifacts (a Doc exists, a
+Sheet exists) but their content was boilerplate. The Composer closes that gap: it
+uses Gemini (through the Unified LLM Client) plus the node's persona, the Outcome
+Contract, and the evidence gathered by upstream research nodes to write the actual
+document body, slide outline, or spreadsheet rows.
+
+It is provider-agnostic — MOCK stores the composed content, LIVE writes it into the
+real Google file. Both therefore produce the same substantive work.
+
+Every method degrades gracefully: if no LLM backend is configured (or the call
+fails / returns junk) it returns a sensible non-empty structure so the mission
+never hard-fails at composition.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from typing import Any, Dict, List, Optional
+
+from nexora.core.personas import Persona, persona_for_capability
+
+
+def _contract_text(contract) -> str:
+    if contract is None:
+        return ""
+    if hasattr(contract, "to_human_summary"):
+        return contract.to_human_summary()
+    if isinstance(contract, dict):
+        parts = [f"Objective: {contract.get('objective', '')}"]
+        for k in ("success_criteria", "required_deliverables", "required_evidence", "constraints"):
+            vals = contract.get(k) or []
+            if vals:
+                parts.append(f"{k}: " + "; ".join(str(v) for v in vals))
+        return "\n".join(parts)
+    return str(contract)
+
+
+def _extract_json(text: str):
+    """Pull the first JSON object/array out of an LLM response."""
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.S)
+    raw = fenced.group(1) if fenced else None
+    if raw is None:
+        m = re.search(r"(\{.*\}|\[.*\])", text, re.S)
+        raw = m.group(1) if m else None
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+class ArtifactComposer:
+    def __init__(self, call_fn=None, model: Optional[str] = None):
+        self.call_fn = call_fn  # test seam
+        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
+
+    # ---------------- transport ----------------
+    async def _call(self, prompt: str) -> Optional[str]:
+        if self.call_fn:
+            return self.call_fn(prompt)
+        from nexora.core.llm_client import llm_available, llm_generate
+        if not llm_available():
+            return None
+        try:
+            return await llm_generate(prompt, temperature=0.4, model=self.model)
+        except Exception:
+            return None
+
+    def _persona_block(self, persona: Optional[Persona | str]) -> str:
+        if isinstance(persona, Persona):
+            return persona.system_prompt()
+        if isinstance(persona, str) and persona:
+            return f"You are acting as the {persona}."
+        return "You are a senior specialist."
+
+    # ---------------- document ----------------
+    async def compose_document(self, *, title: str, objective: str,
+                               persona: Optional[Persona | str] = None,
+                               contract=None, evidence_text: str = "") -> str:
+        prompt = (
+            f"{self._persona_block(persona)}\n\n"
+            f"Write the FULL body of a deliverable titled \"{title}\".\n"
+            f"User goal: {objective}\n\n"
+            f"What success looks like:\n{_contract_text(contract)}\n\n"
+            f"Evidence and findings gathered so far (cite where relevant):\n"
+            f"{evidence_text or '(no upstream research — rely on well-established knowledge)'}\n\n"
+            "Requirements:\n"
+            "- Return GitHub-flavored Markdown only (no preamble, no code fences).\n"
+            "- Start with a one-paragraph executive summary.\n"
+            "- Use clear headings, short paragraphs, and bullet lists.\n"
+            "- Be concrete and specific: real names, numbers, steps, trade-offs.\n"
+            "- If the goal implies a plan/itinerary/schedule, include a day-by-day or step-by-step section.\n"
+            "- Where a claim comes from the evidence above, reference the source inline.\n"
+            "- Do NOT invent specific counts, statistics, quotes, or facts that are not "
+            "in the evidence or well-established general knowledge; if the evidence is thin, "
+            "say so and work from what is given.\n"
+            "- 400-900 words."
+        )
+        text = await self._call(prompt)
+        if text and len(text.strip()) > 120:
+            return text.strip()
+        return self._fallback_document(title, objective, contract, evidence_text)
+
+    def _fallback_document(self, title, objective, contract, evidence_text) -> str:
+        lines = [f"# {title}", "",
+                 f"**Goal:** {objective}", "",
+                 "## Executive summary", "",
+                 "This document was assembled from the evidence collected during the mission. "
+                 "A language model was not available to expand it further.", ""]
+        ct = _contract_text(contract)
+        if ct:
+            lines += ["## Success criteria", "", ct, ""]
+        if evidence_text:
+            lines += ["## Findings", "", evidence_text, ""]
+        return "\n".join(lines)
+
+    # ---------------- slides ----------------
+    async def compose_slides(self, *, title: str, objective: str,
+                             persona: Optional[Persona | str] = None,
+                             contract=None, evidence_text: str = "") -> List[Dict[str, Any]]:
+        prompt = (
+            f"{self._persona_block(persona)}\n\n"
+            f"Design a concise slide deck titled \"{title}\".\n"
+            f"User goal: {objective}\n\n"
+            f"What success looks like:\n{_contract_text(contract)}\n\n"
+            f"Evidence gathered so far:\n{evidence_text or '(rely on well-established knowledge)'}\n\n"
+            "Return ONLY JSON: a list of 5-9 slides, each "
+            '{"title": "...", "bullets": ["...", "..."]}.\n'
+            "Rules: first slide is a title/agenda slide; one idea per slide; "
+            "3-5 short bullets per slide; concrete details, not filler; "
+            "last slide is 'Next steps' with actionable items."
+        )
+        data = _extract_json(await self._call(prompt) or "")
+        slides: List[Dict[str, Any]] = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("title"):
+                    bullets = item.get("bullets") or []
+                    slides.append({"title": str(item["title"]),
+                                   "bullets": [str(b) for b in bullets][:6]})
+        if slides:
+            return slides
+        return self._fallback_slides(title, objective, evidence_text)
+
+    def _fallback_slides(self, title, objective, evidence_text) -> List[Dict[str, Any]]:
+        deck = [{"title": title, "bullets": [objective]}]
+        if evidence_text:
+            chunks = [c.strip("• ").strip() for c in evidence_text.split("\n") if c.strip()][:5]
+            deck.append({"title": "Key findings", "bullets": chunks or ["See mission evidence"]})
+        deck.append({"title": "Next steps", "bullets": ["Review the accompanying document",
+                                                        "Confirm the budget", "Schedule follow-up"]})
+        return deck
+
+    # ---------------- sheet ----------------
+    async def compose_sheet(self, *, title: str, objective: str,
+                            persona: Optional[Persona | str] = None,
+                            contract=None, evidence_text: str = "",
+                            headers: Optional[List[str]] = None) -> Dict[str, Any]:
+        prompt = (
+            f"{self._persona_block(persona)}\n\n"
+            f"Build the data for a spreadsheet titled \"{title}\".\n"
+            f"User goal: {objective}\n\n"
+            f"What success looks like:\n{_contract_text(contract)}\n\n"
+            f"Evidence gathered so far:\n{evidence_text or '(use realistic, clearly-labelled estimates)'}\n\n"
+            "Return ONLY JSON: {\"headers\": [...], \"rows\": [[...], ...], \"notes\": \"...\"}.\n"
+            "Rules: pick columns that fit the goal (for a budget: Category, Item, "
+            "Estimated Cost (USD), Notes). 6-20 rows of real, specific line items. "
+            "Include a final TOTAL row where it makes sense. Numbers must be plausible "
+            "and internally consistent."
+        )
+        data = _extract_json(await self._call(prompt) or "")
+        if isinstance(data, dict) and data.get("headers") and isinstance(data.get("rows"), list):
+            hdrs = [str(h) for h in data["headers"]]
+            rows = [[("" if c is None else str(c)) for c in r]
+                    for r in data["rows"] if isinstance(r, list)]
+            if rows:
+                return {"headers": hdrs, "rows": rows, "notes": str(data.get("notes", ""))}
+        return self._fallback_sheet(title, objective, headers, evidence_text)
+
+    def _fallback_sheet(self, title, objective, headers, evidence_text) -> Dict[str, Any]:
+        hdrs = headers or ["Category", "Item", "Estimated Cost (USD)", "Notes"]
+        rows = [
+            ["Accommodation", "Hotel (1 night)", "220", "Mid-range, central location"],
+            ["Food", "Meals (1 day)", "80", "3 meals, casual dining"],
+            ["Transport", "Local transit / rideshare", "40", "Day pass + short trips"],
+            ["Activities", "Attractions & admissions", "90", "2-3 paid attractions"],
+            ["Misc", "Contingency", "50", "Buffer for extras"],
+            ["TOTAL", "", "480", "Per person, single day"],
+        ]
+        return {"headers": hdrs, "rows": rows, "notes": "Fallback estimate — LLM unavailable."}
+
+    # ---------------- media prompts ----------------
+    async def compose_media_prompt(self, *, kind: str, objective: str,
+                                   evidence_text: str = "") -> str:
+        """kind: 'image' | 'video' | 'audio' — returns a rich generation prompt."""
+        instructions = {
+            "image": "a single photorealistic, editorial-quality still image (16:9)",
+            "video": "a short 6-8 second cinematic establishing video clip",
+            "audio": "a 30-45 second spoken narration script for an audio briefing",
+        }.get(kind, "a visual asset")
+        prompt = (
+            f"Write a production-ready generation prompt for {instructions} that supports this goal:\n"
+            f"{objective}\n\n"
+            f"Context / findings:\n{evidence_text[:1500]}\n\n"
+            "Return ONLY the prompt text itself — vivid, specific, one paragraph, no preamble."
+        )
+        text = await self._call(prompt)
+        if text and text.strip():
+            return text.strip().strip('"')
+        if kind == "audio":
+            return f"A concise, warm spoken briefing summarizing the key points for: {objective}"
+        return f"Photorealistic, vibrant, editorial photograph representing: {objective}"
+
+
+def evidence_from_mission(mission, node) -> str:
+    """Reuse the executor's upstream-summary logic (static, no circular state)."""
+    from nexora.agents.node_executor import NodeExecutor
+    try:
+        return NodeExecutor._summarize_upstream(mission, node)
+    except Exception:
+        return ""

@@ -60,7 +60,7 @@ class LLMClient:
         self.gemini_key = gemini_key if gemini_key is not None else os.getenv("GEMINI_API_KEY", "")
         self.project = project if project is not None else os.getenv("GCP_PROJECT_ID", "")
         self.location = location if location is not None else os.getenv("GCP_LOCATION", "us-central1")
-        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-2.0-flash")
+        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
         self.call_fn = call_fn
         self.http_fn = http_fn
         self.token_fn = token_fn
@@ -99,8 +99,17 @@ class LLMClient:
         return configured             # auto: vertex-first when available
 
     # ---------------- transports ----------------
+    # Real runs go through the Google GenAI SDK (`google-genai`) — this is the
+    # "Google Agent Framework / GenAI SDK" the hackathon requires. The raw-REST
+    # path below is kept only for the http_fn test seam and as a last-resort
+    # fallback if the SDK is unavailable.
     async def _gemini(self, prompt, temperature, model):
         m = model or self.model
+        if self.http_fn is None:
+            try:
+                return await self._genai_sdk(prompt, temperature, m, vertex=False)
+            except ImportError:
+                pass
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
         headers = {"x-goog-api-key": self.gemini_key}
         payload = {"contents": [{"parts": [{"text": prompt}]}],
@@ -109,6 +118,11 @@ class LLMClient:
 
     async def _vertex(self, prompt, temperature, model):
         m = model or self.model
+        if self.http_fn is None and self.token_fn is None:
+            try:
+                return await self._genai_sdk(prompt, temperature, m, vertex=True)
+            except ImportError:
+                pass
         token = await self._vertex_token()
         url = (f"https://{self.location}-aiplatform.googleapis.com/v1/"
                f"projects/{self.project}/locations/{self.location}/"
@@ -117,6 +131,22 @@ class LLMClient:
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"temperature": temperature}}
         return await self._http("vertex", url, headers, payload)
+
+    async def _genai_sdk(self, prompt: str, temperature: float, model: str,
+                         vertex: bool) -> str:
+        """Primary transport — Google GenAI SDK (google-genai)."""
+        from google import genai
+        from google.genai import types
+        if vertex:
+            client = genai.Client(vertexai=True, project=self.project,
+                                  location=self.location)
+        else:
+            client = genai.Client(api_key=self.gemini_key)
+        resp = await client.aio.models.generate_content(
+            model=model, contents=prompt,
+            config=types.GenerateContentConfig(temperature=temperature),
+        )
+        return resp.text or ""
 
     async def _http(self, backend, url, headers, payload) -> str:
         if self.http_fn:

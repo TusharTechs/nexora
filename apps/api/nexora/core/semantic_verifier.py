@@ -90,7 +90,7 @@ class SemanticVerifier:
                  call_fn=None):
         # api_key kept for backward-compat with tests; transport is the Unified LLM Client.
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY", "")
-        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-2.0-flash")
+        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
         self.call_fn = call_fn
 
     async def verify(self, contract, artifacts: List, evidence: List,

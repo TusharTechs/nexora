@@ -65,11 +65,12 @@ class MissionSupervisor:
                     mission.outcome_contract, mission.artifacts,
                     mission.evidence, mission.receipts)
 
-                # Phase 5: Adaptive replan if outcome incomplete
+                # Phase 5: Adaptive replan if outcome incomplete.
+                # replan_count (<2) is the loop bound; adaptive_replan_pending is
+                # only a UI hint and must not itself block a second cycle.
                 if (mission.semantic_verification
                         and not mission.semantic_verification.complete
-                        and mission.replan_count < 2
-                        and not mission.adaptive_replan_pending):
+                        and mission.replan_count < 2):
                     from nexora.core.adaptive_replanner import AdaptiveReplanner
                     ar = AdaptiveReplanner(self.network, PolicyEngine(self.network), PlanCritic(self.network))
                     follow_up = await ar.propose(mission, mission.semantic_verification)
@@ -85,17 +86,18 @@ class MissionSupervisor:
                             detail=f"Semantic verification incomplete; "
                                    f"{len(follow_up)} follow-up nodes added (cycle {mission.replan_count}).",
                         ))
-                        # Dispatch new root nodes
-                        for n in follow_up:
-                            if not n.depends_on:
-                                await self.bus.publish("MISSION.NODE.ADDED",
-                                                       {"mission_id": mission_id, "node_id": n.node_id})
                         await self.repo.save(mission)
                         # Reset terminal state to re-execute
                         mission.state = MissionStateMachine.transition(mission.state, MissionState.EXECUTING)
+                        # Dispatch every follow-up node whose dependencies are
+                        # already satisfied (their deps often completed in the
+                        # first pass), not only the dependency-free ones.
+                        done_ids = {n.node_id for n in mission.nodes
+                                    if n.status in ("SUCCESS", "SKIPPED")}
                         for n in follow_up:
-                            if not n.depends_on:
-                                # Use runtime reference to dispatch new nodes
+                            if all(d in done_ids for d in n.depends_on):
+                                await self.bus.publish("MISSION.NODE.ADDED",
+                                                       {"mission_id": mission_id, "node_id": n.node_id})
                                 if hasattr(self, 'runtime'):
                                     await self.runtime.dispatch(mission_id, n.node_id)
                         # Re-enter execution via dispatch — use the bus to signal

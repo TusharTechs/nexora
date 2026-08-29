@@ -40,13 +40,15 @@ class LLMWorkflowCompiler:
         nodes = self.parse_plan(text, constitution, intent, attachment,
                                 context_bundle, outcome_contract)
         # Phase 9 hardening: guarantee a synthesis artifact for summary/report goals
-        return self._ensure_synthesis(goal, intent, constitution, attachment, nodes)
+        nodes = self._ensure_synthesis(goal, intent, constitution, attachment, nodes)
+        # ADR-066: guarantee every required deliverable maps to a capability
+        return self._ensure_contract_coverage(intent, constitution, outcome_contract, nodes)
 
     async def _call(self, prompt: str) -> str:
         if self.call_fn:
             return self.call_fn(prompt)
         from nexora.core.llm_client import llm_generate
-        model = self.router.route(ModelTier.T2) or os.getenv("NEXORA_MODEL_DEFAULT", "gemini-2.0-flash")
+        model = self.router.route(ModelTier.T2) or os.getenv("NEXORA_MODEL_DEFAULT", "gemini-3.5-flash")
         return await llm_generate(prompt, temperature=0.2, model=model)
 
     def _prompt(self, goal: str, constitution: MissionConstitution,
@@ -196,6 +198,53 @@ class LLMWorkflowCompiler:
             node.depends_on = [by_cap[c].node_id for c in dep_caps
                                if c in by_cap and by_cap[c].node_id != node.node_id]
         return nodes or None
+
+    # Deliverable-noun -> capability. First match wins; order matters.
+    _DELIVERABLE_CAP_RULES = [
+        (("budget", "spreadsheet", "financial model", "tracker", "cost", "expense"), "sheets.create"),
+        (("slide", "deck", "presentation", "pitch"), "slides.create"),
+        (("image", "photo", "picture", "visual", "inspiration", "illustration", "moodboard"), "imagen.generate_image"),
+        (("video", "clip", "trailer", "teaser"), "veo.generate_video"),
+        (("audio", "narration", "podcast", "voiceover", "briefing"), "lyria.generate_audio"),
+        (("task list", "action item", "to-do", "todo", "follow-up", "checklist"), "tasks.create"),
+        (("meeting", "calendar", "kickoff", "schedule an"), "calendar.create_event"),
+        (("email", "announcement", "outreach message"), "gmail.draft"),
+        (("form", "survey", "questionnaire"), "forms.create"),
+        (("document", "guide", "report", "plan", "roadmap", "summary", "brief",
+          "analysis", "itinerary", "strategy", "curriculum", "playbook"), "docs.create"),
+    ]
+
+    def _ensure_contract_coverage(self, intent: MissionIntent,
+                                  constitution: MissionConstitution,
+                                  outcome_contract, nodes):
+        if nodes is None or outcome_contract is None:
+            return nodes
+        deliverables = list(getattr(outcome_contract, "required_deliverables", []) or [])
+        if not deliverables:
+            return nodes
+        have = {n.capability_id for n in nodes}
+        research_ids = [n.node_id for n in nodes if n.capability_id in
+                        {"gmail.search", "drive.search", "web.research", "drive.read",
+                         "multimodal.analyze", "sheets.read", "people.search"}]
+        for deliverable in deliverables:
+            dl = deliverable.lower()
+            cap = next((c for terms, c in self._DELIVERABLE_CAP_RULES
+                        if any(t in dl for t in terms)), None)
+            if not cap or cap in have or cap not in constitution.allowed_capabilities:
+                continue
+            if cap in constitution.forbidden_actions:
+                continue
+            persona = persona_for_capability(cap)
+            inputs = WorkflowCompiler._default_inputs(cap, intent, None)
+            if cap == "docs.create":
+                inputs = {"title": deliverable[:90], "content": ""}
+            n = MissionNode(capability_id=cap, inputs=inputs, depends_on=list(research_ids),
+                            rationale_summary=f"Contract coverage: deliverable '{deliverable[:60]}' "
+                                              f"→ {cap}. [{persona.role}]",
+                            persona=persona.role)
+            nodes.append(n)
+            have.add(cap)
+        return nodes
 
     def _ensure_synthesis(self, goal: str, intent: MissionIntent,
                           constitution: MissionConstitution, attachment,

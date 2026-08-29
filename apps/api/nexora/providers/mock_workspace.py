@@ -68,10 +68,11 @@ class MockWorkspaceProvider:
     async def create_document(self, mission_id, node_id, title, content) -> Artifact:
         await self._enter("docs.create")
         persona = persona_for_capability("docs.create")
-        enriched = (f"# {title}\n\n"
-                    f"_Produced by NEXORA's {persona.role}_\n\n"
-                    f"{content or 'Initial details...'}\n\n"
-                    f"---\n**Quality criteria applied:** {persona.quality_criteria}")
+        body = content or "Initial details..."
+        # Only add a title header if the composed content doesn't already lead with one.
+        if not body.lstrip().startswith("#"):
+            body = f"# {title}\n\n{body}"
+        enriched = f"{body}\n\n---\n_Prepared by NEXORA — {persona.role}_"
         return self._art("DOC", self._docs, mission_id, node_id,
                          title=title, content=enriched, persona=persona.role)
 
@@ -110,14 +111,14 @@ class MockWorkspaceProvider:
         await self._enter("drive.read")
         return self._files.get(file_id, {})
 
-    async def create_sheet(self, mission_id, node_id, title, headers) -> Artifact:
+    async def create_sheet(self, mission_id, node_id, title, headers, rows=None) -> Artifact:
         await self._enter("sheets.create")
         persona = persona_for_capability("sheets.create")
-        enriched_title = f"{title} (by {persona.role})"
-        # Add persona note as first row
-        enriched_headers = list(headers or []) + [f"Produced by {persona.role}"]
+        hdrs = list(headers or ["Item", "Detail", "Value"])
+        rows = [list(r) for r in (rows or [])]
         return self._art("SHEET", self._sheets, mission_id, node_id,
-                         title=enriched_title, headers=enriched_headers, persona=persona.role)
+                         title=title, headers=hdrs, rows=rows,
+                         row_count=len(rows), persona=persona.role)
 
     async def read_sheet(self, sheet_id, range_) -> List[List]:
         await self._enter("sheets.read")
@@ -141,10 +142,16 @@ class MockWorkspaceProvider:
     async def create_slides(self, mission_id, node_id, title, slides) -> Artifact:
         await self._enter("slides.create")
         persona = persona_for_capability("slides.create")
-        # Prepend a title slide with persona attribution
-        enriched_slides = [f"{title} — by NEXORA's {persona.role}"] + list(slides or [])
+        # Accept either list[str] (legacy) or list[{title, bullets}] (ADR-066).
+        norm = []
+        for s in (slides or []):
+            if isinstance(s, dict):
+                norm.append({"title": str(s.get("title", "")),
+                             "bullets": [str(b) for b in (s.get("bullets") or [])]})
+            else:
+                norm.append({"title": str(s), "bullets": []})
         return self._art("SLIDES", self._slides, mission_id, node_id,
-                         title=title, slides=enriched_slides, persona=persona.role)
+                         title=title, slides=norm, slide_count=len(norm), persona=persona.role)
 
     async def send_chat(self, space, text) -> Artifact:
         await self._enter("chat.notify")

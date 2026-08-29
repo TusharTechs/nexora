@@ -75,7 +75,7 @@ class WebResearchService:
         self.firewall = firewall
         self.api_key = api_key if api_key is not None else os.getenv("TAVILY_API_KEY", "")
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
-        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-2.0-flash")
+        self.model = model or os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
         self.call_fn = call_fn        # test seam for LLM
         self.search_fn = search_fn    # test seam for search
 
@@ -111,6 +111,12 @@ class WebResearchService:
         if self.search_fn:
             return self.search_fn(objective, max_results)
         if not self.api_key:
+            # No Tavily key — use Gemini + Google Search grounding when a Gemini
+            # key is configured (real, cited results; no extra API key needed).
+            if self.gemini_key and os.getenv("NEXORA_GROUNDED_RESEARCH", "1") == "1":
+                grounded = await self._grounded_search(objective, max_results)
+                if grounded:
+                    return grounded
             return self._mock_search(objective)
         try:
             async with httpx.AsyncClient(timeout=20) as c:
@@ -135,6 +141,55 @@ class WebResearchService:
         except Exception:
             # Fallback to deterministic mock on any error
             return self._mock_search(objective)
+
+    async def _grounded_search(self, objective: str, max_results: int) -> List[Dict]:
+        """Real web results via Gemini + Google Search grounding (google-genai SDK)."""
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            return []
+        try:
+            client = genai.Client(api_key=self.gemini_key)
+            resp = await client.aio.models.generate_content(
+                model=self.model,
+                contents=(f"Research this and report the key facts with concrete numbers, "
+                          f"names and dates:\n{objective}"),
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    tools=[types.Tool(google_search=types.GoogleSearch())]),
+            )
+        except Exception:
+            return []
+
+        answer = (resp.text or "").strip()
+        results: List[Dict] = []
+        try:
+            cand = resp.candidates[0]
+            gm = getattr(cand, "grounding_metadata", None)
+            chunks = list(getattr(gm, "grounding_chunks", None) or [])
+            for ch in chunks[:max_results]:
+                web = getattr(ch, "web", None)
+                if not web:
+                    continue
+                results.append({
+                    "title": getattr(web, "title", "") or "Source",
+                    "url": getattr(web, "uri", "") or "",
+                    "content": answer[:1500],
+                    "snippet": answer[:300],
+                })
+        except Exception:
+            pass
+
+        if not results and answer:
+            # Grounded answer but no chunk metadata — still real, attribute to Google Search.
+            results.append({
+                "title": f"Google Search synthesis: {objective[:60]}",
+                "url": "https://www.google.com/search?q=" + objective.replace(" ", "+")[:120],
+                "content": answer[:2000],
+                "snippet": answer[:300],
+            })
+        return results
 
     def _mock_search(self, objective: str) -> List[Dict]:
         """Deterministic mock search for when no Tavily key is available."""
