@@ -195,8 +195,19 @@ class NodeExecutor:
             for msg in results:
                 body = msg.get("body") or msg.get("snippet") or ""
                 r = self.firewall.scan(body)
-                scans.append({"id": msg.get("id"), "verdict": r.verdict.value, "quarantined": r.quarantined,
+                gemma = None
+                if r.verdict.value == "CLEAN":
+                    # ADR-074: Gemma second opinion on what the patterns let through
+                    gemma = await self.firewall.classify_gemma(body)
+                quarantined = r.quarantined or gemma == "INJECTION"
+                scans.append({"id": msg.get("id"), "verdict": ("MALICIOUS" if quarantined else r.verdict.value),
+                              "quarantined": quarantined, "gemma": gemma,
                               "matches": [{"pattern_id": m.pattern_id, "category": m.category} for m in r.matches]})
+                if quarantined and not r.quarantined:
+                    self.audit.record(AuditEntry(mission_id=mission_id, node_id=node.node_id,
+                        kind=AuditKind.FIREWALL_DETECT, severity="ALERT", title="quarantined_payload_gemma",
+                        detail="Gemma flagged an injection the deterministic patterns missed.",
+                        metadata={"source_email": msg.get("id"), "classifier": "gemma"}))
                 if r.quarantined:
                     self.audit.record(AuditEntry(mission_id=mission_id, node_id=node.node_id,
                         kind=AuditKind.FIREWALL_DETECT, severity="ALERT", title="quarantined_payload",

@@ -9,7 +9,7 @@
 
 *All Things Agentic Hackathon — **Taskmaster** track*
 
-[Live demo](#) · [Demo video](#) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
+[Live demo](#) · [Demo video](#) · [Demo script](docs/DEMO.md) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
 
 ![NEXORA architecture](docs/architecture.svg)
 
@@ -40,11 +40,12 @@
 | **Gemini image** (`gemini-2.5-flash-image`) | generates the inspiration / concept imagery for a deliverable | [`live_workspace.py:374`](apps/api/nexora/providers/live_workspace.py#L374) |
 | **Gemini TTS** (`gemini-2.5-flash-tts`) | reads a briefing aloud — a real spoken WAV, not music | [`live_workspace.py:717`](apps/api/nexora/providers/live_workspace.py#L717) |
 | **Gemini + Google Search grounding** | `web.research` — real, cited web findings | [`web_research.py:146`](apps/api/nexora/core/web_research.py#L146) |
+| **Gemma 4** (`gemma-4-26b-a4b-it`) | a second‑opinion injection classifier on top of the deterministic firewall — catches novel phrasing the patterns miss | [`security.py`](apps/api/nexora/core/security.py#L111) |
 
 **Verify the wiring yourself in one command** (no key, no account):
 
 ```bash
-grep -rn --include=*.py "gemini-3.5-flash\|veo-3.1\|lyria-002\|gemini-2.5-flash-tts\|gemini-2.5-flash-image" apps/api/nexora
+grep -rn --include=*.py "gemini-3.5-flash\|veo-3.1\|lyria-002\|gemini-2.5-flash-tts\|gemini-2.5-flash-image\|gemma-4" apps/api/nexora
 grep -rn --include=*.py "google.adk\|VertexAiMemoryBankService\|genai.Client(vertexai=True\|google_search=" apps/api/nexora
 ```
 
@@ -289,7 +290,14 @@ against MOCK.
 
 FastAPI · Google ADK · Google GenAI SDK · Vertex AI Agent Engine · Firestore ·
 Cloud Tasks · Cloud Scheduler · Cloud Run · Next.js 16 (App Router) · React 19 ·
-TypeScript · Tailwind CSS · 154 hermetic tests · 52 ADRs
+TypeScript · Tailwind CSS · 154 hermetic tests · 53 ADRs
+
+## Demo
+
+`docs/DEMO.md` is a shot-by-shot 4-minute script that puts every rubric item —
+Gemini 3.5, ADK, Agent Engine, Cloud Run, Firestore, Cloud Tasks, Cloud
+Scheduler, Veo, Lyria, Gemini image, Gemini TTS, Gemma, Google Search grounding —
+on screen, live, with the Cloud Console visible throughout.
 
 ## License
 
