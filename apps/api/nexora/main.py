@@ -134,14 +134,22 @@ async def _get_or_404(mission_id: str) -> Mission:
     return mission
 
 
-@app.get("/healthz")
-async def healthz():
+def _health_payload():
     want = os.getenv("NEXORA_REPO", "memory")
     active = want
     if want == "firestore" and getattr(repo, "_fallback", None) is not None:
         active = "memory (firestore unavailable)"
     return {"status": "ok", "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
             "repo": active, "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
+
+
+# Cloud Run's front end reserves and swallows the bare path "/healthz" before it
+# reaches the container, so expose the health check under names that survive too.
+@app.get("/")
+@app.get("/healthz")
+@app.get("/api/v1/health")
+async def healthz():
+    return _health_payload()
 
 
 @app.get("/api/v1/config")
