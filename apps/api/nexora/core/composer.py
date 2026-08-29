@@ -95,22 +95,24 @@ class ArtifactComposer:
                                persona: Optional[Persona | str] = None,
                                contract=None, evidence_text: str = "") -> str:
         prompt = (
-            f"Write the FULL body of a deliverable titled \"{title}\".\n"
+            f"Write the FULL body of ONE deliverable: \"{title}\".\n"
             f"User goal: {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
             f"Evidence and findings gathered so far (cite where relevant):\n"
             f"{evidence_text or '(no upstream research — rely on well-established knowledge)'}\n\n"
             "Requirements:\n"
-            "- Return GitHub-flavored Markdown only (no preamble, no code fences).\n"
-            "- Start with a one-paragraph executive summary.\n"
-            "- Use clear headings, short paragraphs, and bullet lists.\n"
-            "- Be concrete and specific: real names, numbers, steps, trade-offs.\n"
-            "- If the goal implies a plan/itinerary/schedule, include a day-by-day or step-by-step section.\n"
-            "- Where a claim comes from the evidence above, reference the source inline.\n"
-            "- Do NOT invent specific counts, statistics, quotes, or facts that are not "
-            "in the evidence or well-established general knowledge; if the evidence is thin, "
-            "say so and work from what is given.\n"
-            "- 400-900 words."
+            "- Return GitHub-flavored Markdown only. No code fences, no preamble.\n"
+            "- The FIRST line is a single `# ` H1 title for this document.\n"
+            "- Then a one-paragraph executive summary, then `## ` sections.\n"
+            "- Short paragraphs and `- ` bullet lists. Use `**bold**` for key terms.\n"
+            "- NO image syntax, NO markdown links — write URLs/sources as plain text.\n"
+            "- Write ONLY this document. Do NOT describe or restate the other "
+            "deliverables (the slide deck, the spreadsheet) — they are produced separately.\n"
+            "- Be concrete: real names, numbers, steps, trade-offs. If the goal implies "
+            "an itinerary/schedule/plan, include a day-by-day or step-by-step section.\n"
+            "- Do NOT invent counts, statistics or quotes not in the evidence or "
+            "well-established knowledge; if evidence is thin, say so.\n"
+            "- 450-900 words."
         )
         text = await self._call(prompt, persona)
         if text and len(text.strip()) > 120:

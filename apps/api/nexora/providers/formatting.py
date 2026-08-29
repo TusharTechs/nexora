@@ -22,10 +22,14 @@ MUTED = {"red": 0.42, "green": 0.45, "blue": 0.49}
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
 _INLINE_CODE = re.compile(r"`([^`]+)`")
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\(([^)]*)\)")
 
 
 def _strip_inline(text: str) -> Tuple[str, List[Tuple[int, int]]]:
     """Return (plain_text, [(bold_start, bold_end), ...]) with markdown removed."""
+    text = _MD_IMAGE.sub("", text)
+    text = _MD_LINK.sub(lambda m: m.group(1) if m.group(1) else m.group(2), text)
     text = _INLINE_CODE.sub(r"\1", text)
     out = []
     bolds: List[Tuple[int, int]] = []
@@ -39,6 +43,17 @@ def _strip_inline(text: str) -> Tuple[str, List[Tuple[int, int]]]:
         i = m.end()
     out.append(text[i:])
     return "".join(out), bolds
+
+
+def first_h1(md: str) -> str:
+    """The document's own leading `# ` title, if it has one."""
+    for line in (md or "").replace("\r\n", "\n").split("\n"):
+        m = re.match(r"^\s*#\s+(.+?)\s*$", line)
+        if m:
+            return _strip_inline(m.group(1))[0].strip()
+        if line.strip():
+            return ""
+    return ""
 
 
 def parse_markdown_blocks(md: str) -> List[Dict]:
@@ -83,20 +98,18 @@ def markdown_to_docs_requests(md: str, title: str) -> List[Dict]:
     and emit style ranges as we go.
     """
     blocks = parse_markdown_blocks(md)
+    # If the content leads with an H1, promote it to the document title.
+    if blocks and blocks[0]["type"] == "heading" and blocks[0]["level"] == 1:
+        title = _strip_inline(blocks[0]["text"])[0] or title
+        blocks = blocks[1:]
+
     requests: List[Dict] = []
-    cursor = 1
-    text_buf: List[str] = []
     style_ops: List[Dict] = []
 
-    def flush_insert():
-        nonlocal cursor
-        if text_buf:
-            requests.append({"insertText": {"location": {"index": 1}, "text": "".join(text_buf)}})
-            text_buf.clear()
-
-    # Title block
+    # We build the whole document text once, then insert it at index 1 and apply
+    # style ranges by absolute offset into that single insert.
     title_txt = title.strip() + "\n"
-    bullet_ranges: List[Tuple[int, int]] = []
+    bullet_ranges: List[Tuple[int, int, str]] = []
     running: List[str] = []
 
     def emit(segment: str):

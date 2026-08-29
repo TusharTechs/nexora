@@ -8,6 +8,7 @@ Phase 10: Added real Vertex Imagen image generation with Drive upload.
 """
 import asyncio
 import base64
+import logging
 import io
 import os
 import uuid
@@ -26,6 +27,9 @@ from nexora.core.credential_store import LocalCredentialStore
 class LiveProviderConfigError(Exception):
     """Raised when the LiveWorkspaceProvider is missing required configuration."""
     pass
+
+
+_log = logging.getLogger("nexora.live")
 
 
 def _insecure_tls() -> bool:
@@ -156,7 +160,7 @@ class LiveWorkspaceProvider:
                     })
                 return emails
             except Exception as e:
-                print(f"Gmail search error: {e}")
+                _log.warning(f"Gmail search error: {e}")
                 # Return error as result instead of raising
                 return [{"id": "error", "subject": "Search failed",
                          "snippet": str(e), "body": "", "attachments": []}]
@@ -221,7 +225,7 @@ class LiveWorkspaceProvider:
                 res = service.files().list(q=q, pageSize=10, fields="files(id, name, mimeType)").execute()
                 return [{"id": f['id'], "name": f['name'], "type": f['mimeType']} for f in res.get('files', [])]
             except Exception as e:
-                print(f"Drive search error: {e}")
+                _log.warning(f"Drive search error: {e}")
                 return []
 
         return await asyncio.to_thread(_search)
@@ -309,7 +313,7 @@ class LiveWorkspaceProvider:
                     service.spreadsheets().batchUpdate(
                         spreadsheetId=sheet_id, body={"requests": reqs}).execute()
                 except Exception as e:
-                    print(f"Sheet formatting skipped: {e}")
+                    _log.warning(f"Sheet formatting skipped: {e}")
 
             if self._folder_id and self._folder_id != "root":
                 file = drive_service.files().get(fileId=sheet_id, fields='parents').execute()
@@ -375,7 +379,7 @@ class LiveWorkspaceProvider:
         try:
             png_bytes = await asyncio.to_thread(_generate)
         except Exception as e:
-            print(f"Image generation failed: {e}. Falling back to mock image.")
+            _log.warning(f"Image generation failed: {e}. Falling back to mock image.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().generate_image(mission_id, node_id, prompt)
 
@@ -397,7 +401,7 @@ class LiveWorkspaceProvider:
             fid, uri = await asyncio.to_thread(_upload)
         except Exception as e:
             # Upload failure but generation succeeded — still return artifact with note
-            print(f"Drive upload failed: {e}")
+            _log.warning(f"Drive upload failed: {e}")
             return Artifact(
                 artifact_id=str(uuid.uuid4()),
                 mission_id=mission_id, node_id=node_id,
@@ -465,7 +469,7 @@ class LiveWorkspaceProvider:
                     service.presentations().batchUpdate(
                         presentationId=pres_id, body={"requests": theme}).execute()
             except Exception as e:
-                print(f"Slide theme pass skipped: {e}")
+                _log.warning(f"Slide theme pass skipped: {e}")
 
             if self._folder_id and self._folder_id != "root":
                 f = drive_service.files().get(fileId=pres_id, fields='parents').execute()
@@ -478,7 +482,7 @@ class LiveWorkspaceProvider:
         try:
             pres_id, uri = await asyncio.to_thread(_create)
         except Exception as e:
-            print(f"Slides creation failed: {e}. Falling back to mock deck.")
+            _log.warning(f"Slides creation failed: {e}. Falling back to mock deck.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().create_slides(mission_id, node_id, title, slides)
         return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
@@ -498,7 +502,7 @@ class LiveWorkspaceProvider:
             task_id = await asyncio.to_thread(_create)
             return self._art("TASK", task_id, "https://tasks.google.com/", title=title)
         except Exception as e:
-            print(f"Tasks create failed: {e}. Falling back to mock.")
+            _log.warning(f"Tasks create failed: {e}. Falling back to mock.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().create_task(mission_id, node_id, title, notes)
 
@@ -526,7 +530,7 @@ class LiveWorkspaceProvider:
             people = await asyncio.to_thread(_search)
             return people or [{"name": "No directory matches", "email": "", "role": ""}]
         except Exception as e:
-            print(f"People search failed: {e}. Falling back to mock.")
+            _log.warning(f"People search failed: {e}. Falling back to mock.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().search_people(query)
 
@@ -561,7 +565,7 @@ class LiveWorkspaceProvider:
                 return res.get('values', [])
             return await asyncio.to_thread(_read)
         except Exception as e:
-            print(f"Sheet read failed: {e}")
+            _log.warning(f"Sheet read failed: {e}")
             return []
 
     # ---------------- Gemini Vision ----------------
@@ -601,7 +605,7 @@ class LiveWorkspaceProvider:
                         "summary": parsed.get("summary", ""), "analyzed_by": "Gemini Vision",
                         "artifact": art}
         except Exception as e:
-            print(f"Gemini Vision failed: {e}. Falling back to mock analysis.")
+            _log.warning(f"Gemini Vision failed: {e}. Falling back to mock analysis.")
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().analyze_attachment(mission_id, node_id, attachment)
 
@@ -647,7 +651,7 @@ class LiveWorkspaceProvider:
         try:
             video_bytes = await asyncio.to_thread(_generate)
         except Exception as e:
-            print(f"Vertex Veo failed: {e}. Falling back to mock video.")
+            _log.warning(f"Vertex Veo failed: {e}. Falling back to mock video.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().generate_video(mission_id, node_id, prompt)
 
@@ -664,7 +668,7 @@ class LiveWorkspaceProvider:
         try:
             fid, uri = await asyncio.to_thread(_upload)
         except Exception as e:
-            print(f"Drive video upload failed: {e}")
+            _log.warning(f"Drive video upload failed: {e}")
             return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
                             type="VIDEO", provider="live", resource_id="upload_failed",
                             uri="drive://upload_failed", prompt=prompt)
@@ -708,7 +712,7 @@ class LiveWorkspaceProvider:
         try:
             audio_bytes, mime = await asyncio.to_thread(_generate)
         except Exception as e:
-            print(f"Vertex Lyria failed: {e}. Falling back to mock audio.")
+            _log.warning(f"Vertex Lyria failed: {e}. Falling back to mock audio.")
             from nexora.providers.mock_workspace import MockWorkspaceProvider
             return await MockWorkspaceProvider().generate_audio(mission_id, node_id, prompt)
 
@@ -728,7 +732,7 @@ class LiveWorkspaceProvider:
         try:
             fid, uri = await asyncio.to_thread(_upload)
         except Exception as e:
-            print(f"Drive audio upload failed: {e}")
+            _log.warning(f"Drive audio upload failed: {e}")
             return Artifact(
                 artifact_id=str(uuid.uuid4()),
                 mission_id=mission_id, node_id=node_id,

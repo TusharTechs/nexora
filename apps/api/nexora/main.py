@@ -1,6 +1,11 @@
+import logging
 import os
 from typing import Optional
 from urllib.parse import urlencode
+
+logging.basicConfig(
+    level=os.getenv("NEXORA_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from apps/api/.env before anything reads it

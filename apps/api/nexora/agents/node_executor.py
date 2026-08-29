@@ -39,11 +39,18 @@ class NodeExecutor:
             obj = getattr(oc, "objective", "") or (oc.get("objective", "") if isinstance(oc, dict) else "")
         obj = obj or (mission.intent.objective if mission and mission.intent else "") or raw
         obj = obj.strip().rstrip(".")
-        # Prefer a noun phrase: drop leading "I want to / help me / please"
-        for lead in ("i want to ", "i am going to ", "help me ", "please ", "can you "):
+        # Prefer a noun phrase: drop leading intent/verb scaffolding.
+        for lead in ("i want to ", "i am going to ", "i'm ", "help me ", "please ",
+                     "can you ", "create ", "build ", "prepare ", "produce ",
+                     "develop ", "generate ", "make ", "a ", "an ", "the "):
             if obj.lower().startswith(lead):
                 obj = obj[len(lead):]
-        return (obj[:1].upper() + obj[1:])[:90] or "Deliverable"
+        # Cut at the first list separator so we don't title with the whole brief.
+        for sep in (" consisting of", " including", " with a", ": ", " — ", " - "):
+            i = obj.lower().find(sep)
+            if i > 12:
+                obj = obj[:i]
+        return (obj[:1].upper() + obj[1:]).strip()[:90] or "Deliverable"
 
     @staticmethod
     def _objective(mission, node) -> str:
@@ -170,6 +177,8 @@ class NodeExecutor:
                 persona=persona_for_capability("docs.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=evidence_text)
+            from nexora.providers.formatting import first_h1
+            title = first_h1(content) or title
             node.outputs["content_preview"] = content[:600]
             node.outputs["content_chars"] = len(content)
             artifact = await provider.create_document(mission_id, node.node_id, title, content)
