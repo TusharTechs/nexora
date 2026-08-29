@@ -65,6 +65,7 @@ class MissionConstitution(BaseModel):
     forbidden_domains: List[str] = []      # ADR-038
     forbidden_entities: List[str] = []     # ADR-038
     allowed_capabilities: List[str] = []
+    relevant_memories: List[str] = []      # ADR-072 — semantically retrieved
     created_at: datetime = Field(default_factory=utcnow)
 
 class NodeCondition(BaseModel):

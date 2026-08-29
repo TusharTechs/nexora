@@ -239,7 +239,7 @@ async def create_mission(req: GoalRequest):
         ctx_svc = ContextDiscoveryService(runtime.registry.provider)
         mission.context_bundle = await ctx_svc.discover(req.goal, mission.outcome_contract)
         mission.state = MissionStateMachine.transition(mission.state, MissionState.PLANNING)
-        mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
+        mission.constitution = await ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
 
         # LIVE requires a connected Google account (OAuth) before any work
         if mission.execution_mode == ExecutionMode.LIVE:
@@ -386,7 +386,7 @@ async def run_workflow(template_id: str):
         raise HTTPException(status_code=404, detail="Template not found")
     mission = Mission(goal=template.name, execution_mode=ExecutionMode.MOCK)
     mission.intent = MissionIntent(objective=template.name)
-    mission.constitution = ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
+    mission.constitution = await ConstitutionBuilder(network, memory).build(mission.mission_id, mission.intent)
     mission.nodes = forge.build_nodes(template)
     critique = await PlanCritic(network).critique(mission.nodes, mission.constitution)
     if not critique["approved"]:
@@ -409,7 +409,7 @@ async def replay_mission(mission_id: str):
     if src.constitution:
         replay_m.constitution = src.constitution.model_copy()
     else:
-        replay_m.constitution = ConstitutionBuilder(network, memory).build(
+        replay_m.constitution = await ConstitutionBuilder(network, memory).build(
             replay_m.mission_id, src.intent or MissionIntent(objective=src.goal))
     idmap = {}
     for n in src.nodes:

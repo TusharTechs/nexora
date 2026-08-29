@@ -132,10 +132,20 @@ class NodeExecutor:
             if file_data and file_data.get("content"):
                 lines.append(f"• File: {file_data.get('title', 'Untitled')}\n  {str(file_data.get('content'))[:300]}")
 
+        # ADR-072: fold in the org-memory entries the ConstitutionBuilder
+        # retrieved as relevant to this mission (preferences, policies, past
+        # corrections) so every deliverable respects them.
+        mem = getattr(getattr(mission, "constitution", None), "relevant_memories", None) or []
+        mem_block = ""
+        if mem:
+            mem_block = ("KNOWN PREFERENCES & FACTS FROM ORGANIZATIONAL MEMORY "
+                         "(honour these):\n" + "\n".join(f"• {m}" for m in mem[:6]) + "\n\n")
+
         if lines:
             title = node.inputs.get("title") or "Summary"
-            return f"{title}\n\n" + "\n\n".join(lines)
-        return node.inputs.get("content") or "No upstream data was available to summarize."
+            return mem_block + f"{title}\n\n" + "\n\n".join(lines)
+        return mem_block + (node.inputs.get("content")
+                            or "No upstream data was available to summarize.")
 
     async def execute(self, mission_id, node, constitution, mode, mission=None):
         cap = self.network.get(node.capability_id)

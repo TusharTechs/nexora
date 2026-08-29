@@ -18,17 +18,56 @@ class MemoryStore(Protocol):
 
 
 class InMemoryMemoryStore:
+    """Organizational memory with semantic (vector) retrieval (ADR-072).
+
+    Each entry is embedded on write; `search()` ranks by cosine similarity so the
+    planner and composer see the *relevant* facts/preferences/corrections for a
+    mission rather than the whole store.
+    """
     def __init__(self):
         self._entries: List[MemoryEntry] = []
+        self._vectors: dict = {}   # memory_id -> unit vector
 
     async def add(self, entry: MemoryEntry) -> None:
         self._entries.append(entry)
+        try:
+            from nexora.core.embeddings import embed
+            self._vectors[entry.memory_id] = (await embed([entry.content]))[0]
+        except Exception:
+            pass
 
     async def all(self) -> List[MemoryEntry]:
         return list(self._entries)
 
+    async def search(self, query: str, k: int = 5,
+                     scope: MemoryScope | None = None,
+                     types: List[MemoryType] | None = None) -> List[MemoryEntry]:
+        pool = [e for e in self._entries
+                if (scope is None or e.scope == scope)
+                and (types is None or e.type in types)]
+        if not pool or not query.strip():
+            return pool[:k]
+        from nexora.core.embeddings import cosine, embed
+        try:
+            qv = (await embed([query]))[0]
+        except Exception:
+            return pool[:k]
+        scored = []
+        for e in pool:
+            v = self._vectors.get(e.memory_id)
+            if v is None:
+                try:
+                    v = (await embed([e.content]))[0]
+                    self._vectors[e.memory_id] = v
+                except Exception:
+                    v = None
+            scored.append((cosine(qv, v) if v else 0.0, e))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [e for score, e in scored[:k] if score > 0.05] or pool[:k]
+
     def clear(self):
         self._entries.clear()
+        self._vectors.clear()
 
     def forbiddens(self) -> List[str]:
         return [e.capability for e in self._entries
