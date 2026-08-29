@@ -136,9 +136,12 @@ async def _get_or_404(mission_id: str) -> Mission:
 
 @app.get("/healthz")
 async def healthz():
+    want = os.getenv("NEXORA_REPO", "memory")
+    active = want
+    if want == "firestore" and getattr(repo, "_fallback", None) is not None:
+        active = "memory (firestore unavailable)"
     return {"status": "ok", "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
-            "repo": os.getenv("NEXORA_REPO", "memory"),
-            "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
+            "repo": active, "dispatcher": os.getenv("NEXORA_DISPATCHER", "local")}
 
 
 @app.get("/api/v1/config")

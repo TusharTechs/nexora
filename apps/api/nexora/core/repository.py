@@ -37,25 +37,48 @@ def _firestore_async_client(project: str):
 
 
 class FirestoreMissionRepository:
-    """Durable state. Honors FIRESTORE_EMULATOR_HOST for zero-cost local runs."""
+    """Durable state. Honors FIRESTORE_EMULATOR_HOST for zero-cost local runs.
+
+    Degrades to an in-process store if Firestore is unreachable (API not enabled,
+    no `(default)` database, missing IAM) so a misconfiguration can never brick a
+    running demo — it just logs a warning and stops being durable."""
     def __init__(self, project_id: str):
         self.project_id = project_id
         self._client = None
+        self._fallback: Optional[InMemoryMissionRepository] = None
 
     def client(self):
         if self._client is None:
             self._client = _firestore_async_client(self.project_id)
         return self._client
 
+    def _degrade(self, err) -> InMemoryMissionRepository:
+        if self._fallback is None:
+            import logging
+            logging.getLogger("nexora.repo").warning(
+                "Firestore unavailable (%s) — falling back to in-memory state. "
+                "Enable firestore.googleapis.com and create a (default) database "
+                "for durable missions.", err)
+            self._fallback = InMemoryMissionRepository()
+        return self._fallback
+
     async def save(self, mission: Mission) -> None:
-        await self.client().collection("missions").document(mission.mission_id).set(
-            mission.model_dump(mode="json"))
+        if self._fallback is not None:
+            return await self._fallback.save(mission)
+        try:
+            await self.client().collection("missions").document(mission.mission_id).set(
+                mission.model_dump(mode="json"))
+        except Exception as e:
+            await self._degrade(e).save(mission)
 
     async def get(self, mission_id: str) -> Optional[Mission]:
-        snap = await self.client().collection("missions").document(mission_id).get()
-        if not snap.exists:
-            return None
-        return Mission.model_validate(snap.to_dict())
+        if self._fallback is not None:
+            return await self._fallback.get(mission_id)
+        try:
+            snap = await self.client().collection("missions").document(mission_id).get()
+            return Mission.model_validate(snap.to_dict()) if snap.exists else None
+        except Exception as e:
+            return await self._degrade(e).get(mission_id)
 
 
 def build_repository() -> MissionRepository:
@@ -93,27 +116,51 @@ class FirestoreScheduleRepository:
     def __init__(self, project_id: str):
         self.project_id = project_id
         self._client = None
+        self._fallback: Optional[InMemoryScheduleRepository] = None
 
     def client(self):
         if self._client is None:
             self._client = _firestore_async_client(self.project_id)
         return self._client
 
+    def _degrade(self, err) -> InMemoryScheduleRepository:
+        if self._fallback is None:
+            import logging
+            logging.getLogger("nexora.repo").warning(
+                "Firestore unavailable for schedules (%s) — in-memory fallback.", err)
+            self._fallback = InMemoryScheduleRepository()
+        return self._fallback
+
     async def save(self, sched: MissionSchedule) -> None:
-        await self.client().collection("schedules").document(sched.schedule_id).set(
-            sched.model_dump(mode="json"))
+        if self._fallback is not None:
+            return await self._fallback.save(sched)
+        try:
+            await self.client().collection("schedules").document(sched.schedule_id).set(
+                sched.model_dump(mode="json"))
+        except Exception as e:
+            await self._degrade(e).save(sched)
 
     async def delete(self, schedule_id: str) -> None:
-        await self.client().collection("schedules").document(schedule_id).delete()
+        if self._fallback is not None:
+            return await self._fallback.delete(schedule_id)
+        try:
+            await self.client().collection("schedules").document(schedule_id).delete()
+        except Exception as e:
+            await self._degrade(e).delete(schedule_id)
 
     async def all(self) -> List[MissionSchedule]:
-        out: List[MissionSchedule] = []
-        async for snap in self.client().collection("schedules").stream():
-            try:
-                out.append(MissionSchedule.model_validate(snap.to_dict()))
-            except Exception:
-                continue
-        return out
+        if self._fallback is not None:
+            return await self._fallback.all()
+        try:
+            out: List[MissionSchedule] = []
+            async for snap in self.client().collection("schedules").stream():
+                try:
+                    out.append(MissionSchedule.model_validate(snap.to_dict()))
+                except Exception:
+                    continue
+            return out
+        except Exception as e:
+            return await self._degrade(e).all()
 
 
 def build_schedule_repository() -> ScheduleRepository:
