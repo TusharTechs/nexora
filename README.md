@@ -9,7 +9,7 @@
 
 *All Things Agentic Hackathon — **Taskmaster** track*
 
-[Live demo](#) · [Demo video](#) · [Demo script](docs/DEMO.md) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
+[Live demo](https://nexora-nexus.vercel.app) · [Demo video](#) · [Demo script](docs/DEMO.md) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
 
 ![NEXORA architecture](docs/architecture.svg)
 
@@ -281,15 +281,26 @@ cd apps/api && PYTHONPATH=../.. venv/bin/python -m pytest -q
 ## Deploy to Google Cloud
 
 ```bash
-PROJECT_ID=your-project GEMINI_API_KEY=xxxxx ./infrastructure/deploy.sh
+PROJECT_ID=your-project ./infrastructure/deploy.sh          # demo profile (default)
+PROJECT_ID=your-project NEXORA_PROFILE=scale ./infrastructure/deploy.sh
 ```
 
-Enables the APIs; creates Firestore, the `nexora-workers` Cloud Tasks queue, the
-`nexora-run-due` Cloud Scheduler job, an **Agent Engine** instance, an Artifact
-Registry repo and a least‑privilege service account; stores the key in Secret
-Manager; builds with Cloud Build; deploys to Cloud Run; wires the service URL
-back for the OIDC gate. Terraform equivalent in
-[`infrastructure/terraform`](infrastructure/terraform).
+Enables each API (one at a time, with retries for the transient service‑agent
+IAM errors); grants the Compute default SA the Cloud Build roles new projects no
+longer inherit; creates an **Agent Engine** instance, an Artifact Registry repo
+and a least‑privilege service account; builds with Cloud Build; deploys to Cloud
+Run; wires the service URL back for the OIDC gate. `GEMINI_API_KEY` is optional —
+the whole stack runs on Vertex ADC; a key only feeds the Gemma firewall.
+
+**demo** profile (default): in‑process task graph + in‑memory state on one
+always‑warm instance — the reliable choice for a judge review.
+**scale** profile: Firestore state + Cloud Tasks fan‑out + Cloud Scheduler. See
+[ADR‑075](docs/adr/ADR-075-cloud-run-deployment-profiles.md). Terraform
+equivalent in [`infrastructure/terraform`](infrastructure/terraform).
+
+The running instance for this submission: **<https://nexora-nexus.vercel.app>**
+(Command Center) → Cloud Run API → Vertex AI. `/api/v1/config` shows the live
+stack.
 
 ## Screenshot guide
 
