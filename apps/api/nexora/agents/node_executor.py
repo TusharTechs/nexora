@@ -436,7 +436,10 @@ class NodeExecutor:
             artifact = result["artifact"]
             node.rationale_summary += f" [extracted error_code={result['error_code']}]"
         elif node.capability_id == "veo.generate_video":
-            vp = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
+            raw = node.inputs.get("prompt", "")
+            weak = (not raw or len(raw) < 40 or raw.lower().startswith(
+                ("launch video for", "video for", "video of", "create ")))
+            vp = raw if not weak else await self.composer.compose_media_prompt(
                 kind="video", objective=self._objective(mission, node),
                 evidence_text=self._summarize_upstream(mission, node))
             node.inputs["prompt"] = vp
@@ -447,7 +450,10 @@ class NodeExecutor:
                               ("music", "jingle", "song", "soundtrack", "theme tune",
                                "background track", "score"))
             kind = "music" if wants_music else "speech"
-            ap = node.inputs.get("prompt") or await self.composer.compose_media_prompt(
+            raw = node.inputs.get("prompt", "")
+            weak = (not raw or len(raw) < 40 or raw.lower().startswith(
+                ("executive audio briefing for", "audio for", "create ")))
+            ap = raw if not weak else await self.composer.compose_media_prompt(
                 kind=("music" if wants_music else "audio"), objective=obj,
                 evidence_text=self._summarize_upstream(mission, node))
             node.inputs["prompt"] = ap
