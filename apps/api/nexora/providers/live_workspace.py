@@ -659,12 +659,58 @@ class LiveWorkspaceProvider:
         return await MockWorkspaceProvider().analyze_attachment(mission_id, node_id, attachment)
 
     async def send_chat(self, space, text):
+        """Post to a Google Chat space via an incoming webhook (GOOGLE_CHAT_WEBHOOK).
+        No webhook configured → mock (a Chat bot needs Workspace-admin setup)."""
+        webhook = os.getenv("GOOGLE_CHAT_WEBHOOK", "")
+        if webhook:
+            def _post():
+                import httpx as _httpx
+                r = _httpx.post(webhook, json={"text": str(text)[:4000]},
+                                timeout=30, verify=not _insecure_tls())
+                r.raise_for_status()
+                return r.json().get("name", "chat_message")
+            try:
+                mid = await asyncio.to_thread(_post)
+                return self._art("CHAT", mid, webhook.split("?")[0], space=space)
+            except Exception as e:
+                _log.warning(f"Chat webhook failed: {e}. Falling back to mock.")
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().send_chat(space, text)
 
     async def create_form(self, mission_id, node_id, title, questions):
-        from nexora.providers.mock_workspace import MockWorkspaceProvider
-        return await MockWorkspaceProvider().create_form(mission_id, node_id, title, questions)
+        """Real Google Form via the Forms API, filed in the mission folder."""
+        try:
+            service = await self._build_service('forms', 'v1')
+            drive_service = await self._build_service('drive', 'v3')
+
+            def _create():
+                form = service.forms().create(body={"info": {"title": title[:300]}}).execute()
+                form_id = form["formId"]
+                requests = []
+                for i, q in enumerate(questions or ["Your feedback"]):
+                    requests.append({"createItem": {
+                        "item": {"title": str(q)[:300],
+                                 "questionItem": {"question": {
+                                     "required": False,
+                                     "textQuestion": {"paragraph": True}}}},
+                        "location": {"index": i}}})
+                if requests:
+                    service.forms().batchUpdate(
+                        formId=form_id, body={"requests": requests}).execute()
+                if self._folder_id and self._folder_id != "root":
+                    f = drive_service.files().get(fileId=form_id, fields="parents").execute()
+                    drive_service.files().update(
+                        fileId=form_id, addParents=self._folder_id,
+                        removeParents=",".join(f.get("parents", [])), fields="id").execute()
+                return form_id, form.get("responderUri",
+                                         f"https://docs.google.com/forms/d/{form_id}/edit")
+
+            form_id, uri = await asyncio.to_thread(_create)
+            return self._art("FORM", form_id, uri, title=title)
+        except Exception as e:
+            _log.warning(f"Forms create failed: {e}. Falling back to mock.")
+            from nexora.providers.mock_workspace import MockWorkspaceProvider
+            return await MockWorkspaceProvider().create_form(mission_id, node_id, title, questions)
 
     # ---------------- Vertex Veo (GA managed model — no enablement needed,
     # just aiplatform.googleapis.com + roles/aiplatform.user) ----------------
@@ -804,12 +850,22 @@ class LiveWorkspaceProvider:
 
             def _lyria() -> tuple:
                 import httpx as _httpx
-                r = _httpx.post(url, headers={"Authorization": f"Bearer {token}"},
-                                json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
-                                timeout=120, verify=not _insecure_tls())
-                r.raise_for_status()
-                pred = r.json()["predictions"][0]
-                return base64.b64decode(pred["bytesBase64Encoded"]), pred.get("mimeType", "audio/wav")
+                # Lyria rejects some prompts with a 500 ("try a different prompt").
+                # Try the rich prompt, then a plain instrumental fallback.
+                attempts = [prompt,
+                            "an original, warm, uplifting instrumental theme, no vocals"]
+                last = None
+                with _httpx.Client(timeout=120, verify=not _insecure_tls()) as c:
+                    for p in attempts:
+                        r = c.post(url, headers={"Authorization": f"Bearer {token}"},
+                                   json={"instances": [{"prompt": p}],
+                                         "parameters": {"sampleCount": 1}})
+                        if r.status_code < 400:
+                            pred = r.json()["predictions"][0]
+                            return (base64.b64decode(pred["bytesBase64Encoded"]),
+                                    pred.get("mimeType", "audio/wav"))
+                        last = f"HTTP {r.status_code}: {r.text[:120]}"
+                raise RuntimeError(last or "Lyria call failed")
 
             try:
                 audio_bytes, mime = await asyncio.to_thread(_lyria)

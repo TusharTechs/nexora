@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -47,7 +48,20 @@ from nexora.providers.replay_provider import ReplayProvider
 from nexora.providers.protocols import ProviderRegistry
 from nexora.benchmarks import BENCHMARKS, evaluate_mission
 
-app = FastAPI(title="NEXORA API")
+@asynccontextmanager
+async def _lifespan(_app):
+    # Names below are module globals bound further down; resolved at startup, not import.
+    audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
+                            title="api.started", detail="NEXORA API started."))
+    await scheduler.load()   # rehydrate standing instructions
+    # Local / single-instance: run the scheduler in-process. In production
+    # Cloud Scheduler pings /internal/run_due every minute instead.
+    if os.getenv("NEXORA_SCHEDULER_LOOP", "1") == "1" and os.getenv("NEXORA_DISPATCHER") != "cloud":
+        scheduler.start_loop(_spawn_scheduled)
+    yield
+
+
+app = FastAPI(title="NEXORA API", lifespan=_lifespan)
 
 # Allowed browser origins: localhost for dev plus anything in CORS_ORIGINS
 # (comma-separated) for the deployed frontend.
@@ -195,17 +209,6 @@ async def _spawn_scheduled(goal: str, execution_mode: ExecutionMode) -> str:
     """Scheduler entry point — create a mission from a standing instruction."""
     mission = await create_mission(GoalRequest(goal=goal, execution_mode=execution_mode))
     return mission.mission_id
-
-
-@app.on_event("startup")
-async def _startup():
-    audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
-                            title="api.started", detail="NEXORA API started."))
-    await scheduler.load()   # rehydrate standing instructions from Firestore
-    # Local dev / single-instance: run the scheduler in-process. In production
-    # Cloud Scheduler pings /internal/run_due every minute instead.
-    if os.getenv("NEXORA_SCHEDULER_LOOP", "1") == "1" and os.getenv("NEXORA_DISPATCHER") != "cloud":
-        scheduler.start_loop(_spawn_scheduled)
 
 
 class ScheduleRequest(BaseModel):

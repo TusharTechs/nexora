@@ -95,7 +95,7 @@ so the hermetic test suite never touches ADK or Agent Engine.
   before it reaches a prompt.
 - **Swappable everything** — repository, dispatcher, scheduler, provider, model
   backend are interfaces with local + Google Cloud implementations.
-- 52 ADRs in [`adr/`](adr) record the reasoning.
+- 56 ADRs in [`adr/`](adr) record the reasoning.
 
 ## Execution modes
 

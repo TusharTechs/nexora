@@ -49,6 +49,24 @@ grep -rn --include=*.py "gemini-3.5-flash\|veo-3.1\|lyria-002\|gemini-2.5-flash-
 grep -rn --include=*.py "google.adk\|VertexAiMemoryBankService\|genai.Client(vertexai=True\|google_search=" apps/api/nexora
 ```
 
+**Verify the models actually resolve** (needs your GCP auth) — one real call per model:
+
+```bash
+cd apps/api && PYTHONPATH=../.. ./venv/bin/python ../../infrastructure/probe_models.py
+```
+
+Probed against the deploy project on 2026‑08‑30 — every model NEXORA uses resolves:
+
+| Role | Model ID | Endpoint |
+|---|---|---|
+| reasoning (Architect, workforce, Auditor) | `gemini-3.5-flash` | Vertex AI |
+| vector memory | `text-embedding-005` | Vertex AI |
+| concept imagery | `gemini-2.5-flash-image` | Vertex AI |
+| spoken briefing | `gemini-2.5-flash-tts` | Vertex AI |
+| cinematic clip | `veo-3.1-fast-generate-001` | Vertex AI (us‑central1) |
+| original music | `lyria-002` | Vertex AI — Lyria rejects some prompts; NEXORA retries once, then falls back |
+| injection second opinion | `gemma-4-26b-a4b-it` | Gemini API |
+
 ---
 
 ## The problem
@@ -290,7 +308,7 @@ against MOCK.
 
 FastAPI · Google ADK · Google GenAI SDK · Vertex AI Agent Engine · Firestore ·
 Cloud Tasks · Cloud Scheduler · Cloud Run · Next.js 16 (App Router) · React 19 ·
-TypeScript · Tailwind CSS · 154 hermetic tests · 53 ADRs
+TypeScript · Tailwind CSS · 154 hermetic tests · 56 ADRs
 
 ## Demo
 
