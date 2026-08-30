@@ -261,12 +261,14 @@ class LiveWorkspaceProvider:
         return await asyncio.to_thread(_read)
 
     # ---------------- Google Docs ----------------
-    async def create_document(self, mission_id: str, node_id: str, title: str, content: str) -> Artifact:
+    async def create_document(self, mission_id: str, node_id: str, title: str,
+                              content: str, hero_image_id: Optional[str] = None) -> Artifact:
         service = await self._build_service('docs', 'v1')
         drive_service = await self._build_service('drive', 'v3')
 
         def _create():
-            from nexora.providers.formatting import markdown_to_docs_requests
+            from nexora.providers.formatting import (markdown_to_docs_requests,
+                                                     hero_image_doc_requests)
             doc = service.documents().create(body={'title': title}).execute()
             doc_id = doc['documentId']
 
@@ -281,6 +283,14 @@ class LiveWorkspaceProvider:
                     service.documents().batchUpdate(
                         documentId=doc_id,
                         body={'requests': requests[i:i + 400]}).execute()
+
+            if hero_image_id:
+                try:
+                    service.documents().batchUpdate(
+                        documentId=doc_id,
+                        body={'requests': hero_image_doc_requests(hero_image_id)}).execute()
+                except Exception as e:
+                    _log.warning(f"Doc hero image skipped: {e}")
 
             # Move to mission folder if we have one
             if self._folder_id and self._folder_id != "root":
@@ -425,6 +435,12 @@ class LiveWorkspaceProvider:
             meta = {"name": filename, "parents": parents}
             media = MediaIoBaseUpload(io.BytesIO(png_bytes), mimetype="image/png")
             f = drive.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+            # Make it link-readable so Docs/Slides can embed it by URL.
+            try:
+                drive.permissions().create(
+                    fileId=f["id"], body={"type": "anyone", "role": "reader"}).execute()
+            except Exception as e:
+                _log.warning(f"Image share-link permission skipped: {e}")
             return f["id"], f.get("webViewLink", f"https://drive.google.com/file/d/{f['id']}/view")
 
         try:
@@ -462,7 +478,8 @@ class LiveWorkspaceProvider:
         return bool(artifact.uri)
 
     # ---------------- Google Slides ----------------
-    async def create_slides(self, mission_id: str, node_id: str, title: str, slides) -> Artifact:
+    async def create_slides(self, mission_id: str, node_id: str, title: str, slides,
+                            hero_image_id: Optional[str] = None) -> Artifact:
         service = await self._build_service('slides', 'v1')
         drive_service = await self._build_service('drive', 'v3')
 
@@ -491,10 +508,13 @@ class LiveWorkspaceProvider:
             if text_reqs:
                 service.presentations().batchUpdate(
                     presentationId=pres_id, body={"requests": text_reqs}).execute()
-            # Theme pass: recolour titles to the accent
+            # Theme pass: title-slide background, per-slide accent bar
             try:
                 fresh = service.presentations().get(presentationId=pres_id).execute()
                 theme = slide_theme_requests(fresh)
+                if hero_image_id:
+                    from nexora.providers.formatting import hero_image_slide_requests
+                    theme += hero_image_slide_requests(fresh, hero_image_id)
                 if theme:
                     service.presentations().batchUpdate(
                         presentationId=pres_id, body={"requests": theme}).execute()

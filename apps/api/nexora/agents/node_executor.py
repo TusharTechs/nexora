@@ -69,6 +69,19 @@ class NodeExecutor:
         "imagen.generate_image": ("image", "photo", "visual", "picture", "illustration"),
     }
 
+    @staticmethod
+    def _hero_image_id(mission):
+        """resource_id of a generated hero image, if one has been produced —
+        for embedding into the doc / title slide."""
+        if not mission:
+            return None
+        for a in reversed(getattr(mission, "artifacts", []) or []):
+            if getattr(a, "type", "") == "IMAGE":
+                rid = getattr(a, "resource_id", "") or ""
+                if rid and rid not in ("upload_failed", ""):
+                    return rid
+        return None
+
     @classmethod
     def _deliverable_brief(cls, mission, node) -> str:
         """The single contract deliverable this node is responsible for, phrased
@@ -222,7 +235,12 @@ class NodeExecutor:
             title = first_h1(content) or title
             node.outputs["content_preview"] = content[:600]
             node.outputs["content_chars"] = len(content)
-            artifact = await provider.create_document(mission_id, node.node_id, title, content)
+            try:
+                artifact = await provider.create_document(
+                    mission_id, node.node_id, title, content,
+                    hero_image_id=self._hero_image_id(mission))
+            except TypeError:
+                artifact = await provider.create_document(mission_id, node.node_id, title, content)
 
         elif node.capability_id == "gmail.search":
             results = await provider.search_emails(node.inputs.get("query", ""), node.inputs.get("max_results", 5))
@@ -400,7 +418,12 @@ class NodeExecutor:
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=self._summarize_upstream(mission, node))
             node.outputs["slide_count"] = len(deck)
-            artifact = await provider.create_slides(mission_id, node.node_id, title, deck)
+            try:
+                artifact = await provider.create_slides(
+                    mission_id, node.node_id, title, deck,
+                    hero_image_id=self._hero_image_id(mission))
+            except TypeError:
+                artifact = await provider.create_slides(mission_id, node.node_id, title, deck)
         elif node.capability_id == "chat.notify":
             artifact = await provider.send_chat(node.inputs.get("space", "general"), node.inputs.get("text", ""))
         elif node.capability_id == "people.search":

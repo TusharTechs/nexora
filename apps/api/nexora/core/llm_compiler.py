@@ -45,7 +45,21 @@ class LLMWorkflowCompiler:
         # ADR-066: guarantee every required deliverable maps to a capability
         nodes = self._ensure_contract_coverage(intent, constitution, outcome_contract, nodes)
         nodes = self._prune_uncovered(outcome_contract, nodes)
+        nodes = self._wire_hero_image(nodes)
         return self._dedupe_refinements(nodes)
+
+    @staticmethod
+    def _wire_hero_image(nodes):
+        """If the plan generates an image, make the doc and deck depend on it so
+        the hero image is ready to embed by the time they compose."""
+        img = next((n for n in nodes if n.capability_id == "imagen.generate_image"), None)
+        if not img:
+            return nodes
+        for n in nodes:
+            if n.capability_id in ("docs.create", "slides.create") \
+                    and img.node_id not in n.depends_on and n.node_id != img.node_id:
+                n.depends_on = list(n.depends_on) + [img.node_id]
+        return nodes
 
     # Decorative capabilities that should only appear when a contract deliverable
     # actually asks for that kind of output.

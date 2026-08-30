@@ -65,7 +65,7 @@ class MockWorkspaceProvider:
 
     # ---- Artifact-producing methods with Persona integration (Phase 6) ----
 
-    async def create_document(self, mission_id, node_id, title, content) -> Artifact:
+    async def create_document(self, mission_id, node_id, title, content, hero_image_id=None) -> Artifact:
         await self._enter("docs.create")
         persona = persona_for_capability("docs.create")
         body = content or "Initial details..."
@@ -140,7 +140,7 @@ class MockWorkspaceProvider:
         return self._art("TASK", self._tasks, mission_id, node_id,
                          title=title, notes=enriched_notes, persona=persona.role)
 
-    async def create_slides(self, mission_id, node_id, title, slides) -> Artifact:
+    async def create_slides(self, mission_id, node_id, title, slides, hero_image_id=None) -> Artifact:
         await self._enter("slides.create")
         persona = persona_for_capability("slides.create")
         # Accept either list[str] (legacy) or list[{title, bullets}] (ADR-066).

@@ -450,6 +450,43 @@ def sheet_format_requests(sheet_id: int, n_cols: int, n_rows: int,
     return reqs
 
 
+def drive_image_url(file_id: str) -> str:
+    """A link-readable Drive file rendered as a raw image, embeddable by Docs/Slides."""
+    return f"https://drive.google.com/uc?export=view&id={file_id}"
+
+
+def hero_image_doc_requests(file_id: str) -> List[Dict]:
+    """Insert a full-width hero image as the very first paragraph of a Doc.
+    Runs as its own batch AFTER the text is styled, so ranges are unaffected."""
+    url = drive_image_url(file_id)
+    return [
+        {"insertText": {"location": {"index": 1}, "text": "\n"}},
+        {"insertInlineImage": {"location": {"index": 1}, "uri": url,
+                               "objectSize": {
+                                   "width": {"magnitude": 468, "unit": "PT"},
+                                   "height": {"magnitude": 258, "unit": "PT"}}}},
+    ]
+
+
+def hero_image_slide_requests(presentation: Dict, file_id: str) -> List[Dict]:
+    """Place the hero image on the title slide, bottom-right, as a framed accent."""
+    slides = presentation.get("slides", [])
+    if not slides:
+        return []
+    sid = slides[0]["objectId"]
+    url = drive_image_url(file_id)
+    w, h = 3_600_000, 2_025_000  # EMU, 16:9
+    return [{"createImage": {
+        "url": url,
+        "elementProperties": {
+            "pageObjectId": sid,
+            "size": {"width": {"magnitude": w, "unit": "EMU"},
+                     "height": {"magnitude": h, "unit": "EMU"}},
+            "transform": {"scaleX": 1, "scaleY": 1,
+                          "translateX": 9144000 - w - 300000,
+                          "translateY": 6858000 - h - 300000, "unit": "EMU"}}}}]
+
+
 def guess_money_columns(headers: List[str]) -> List[int]:
     keys = ("cost", "price", "amount", "usd", "$", "budget", "total", "spend", "value", "estimate")
     return [i for i, h in enumerate(headers) if any(k in str(h).lower() for k in keys)]
