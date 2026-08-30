@@ -1,5 +1,76 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+
+/* ---- lightweight preview renderers (no markdown dep) ---- */
+function inlineBold(s: string) {
+  return s.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
+    p.startsWith("**") && p.endsWith("**")
+      ? <strong key={i} className="text-zinc-100">{p.slice(2, -2)}</strong>
+      : <span key={i}>{p}</span>);
+}
+function DocPreview({ md }: { md: string }) {
+  const lines = (md || "").replace(/\r\n/g, "\n").split("\n");
+  return (
+    <div className="space-y-1.5 text-[13px] leading-relaxed text-zinc-300">
+      {lines.map((raw, i) => {
+        const l = raw.trimEnd();
+        if (!l.trim()) return <div key={i} className="h-1" />;
+        if (/^#\s+/.test(l)) return <p key={i} className="text-base font-bold text-emerald-300">{l.replace(/^#\s+/, "")}</p>;
+        if (/^##\s+/.test(l)) return <p key={i} className="mt-2 text-sm font-bold text-emerald-400">{l.replace(/^##+\s+/, "")}</p>;
+        if (/^###\s+/.test(l)) return <p key={i} className="mt-1 font-semibold text-zinc-200">{l.replace(/^###+\s+/, "")}</p>;
+        if (/^\s*[-*]\s+/.test(l)) return <p key={i} className="pl-3">• {inlineBold(l.replace(/^\s*[-*]\s+/, ""))}</p>;
+        return <p key={i}>{inlineBold(l)}</p>;
+      })}
+    </div>
+  );
+}
+function SheetPreview({ rows }: { rows: any[][] }) {
+  if (!rows?.length) return null;
+  const [head, ...body] = rows;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[12px]">
+        <thead>
+          <tr>{head.map((c: any, i: number) => (
+            <th key={i} className="border border-zinc-800 bg-emerald-900/40 px-2 py-1 text-left font-bold text-emerald-200">{String(c)}</th>
+          ))}</tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri} className={ri % 2 ? "bg-zinc-900/40" : ""}>
+              {r.map((c: any, ci: number) => (
+                <td key={ci} className="border border-zinc-800 px-2 py-1 text-zinc-300">{String(c)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function DeckPreview({ deck }: { deck: any[] }) {
+  return (
+    <div className="space-y-2">
+      {deck.map((s, i) => (
+        <div key={i} className="rounded border border-zinc-800 bg-zinc-900/60 p-2.5">
+          <p className="text-[12px] font-bold text-emerald-300">{i + 1}. {s.title}</p>
+          <ul className="mt-1 space-y-0.5 text-[12px] text-zinc-400">
+            {(s.bullets || []).map((b: string, bi: number) => <li key={bi}>• {b}</li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+function EmailPreview({ e }: { e: any }) {
+  return (
+    <div className="space-y-1.5 text-[13px] text-zinc-300">
+      {e.to?.length ? <p className="text-[11px] text-zinc-500">To: {e.to.join(", ")}</p> : null}
+      <p className="font-bold text-zinc-100">{e.subject}</p>
+      <div className="border-t border-zinc-800 pt-2"><DocPreview md={e.body} /></div>
+    </div>
+  );
+}
 
 type Phase =
   | "UNDERSTANDING"
@@ -71,6 +142,7 @@ interface Props {
 }
 
 export default function CommandCenter({ mission, events, onShowDetails }: Props) {
+  const [expanded, setExpanded] = useState<string | null>(null);
   const phase = derivePhase(mission);
 
   // Pin the type so Object.entries returns [string, any[]] instead of unknown
@@ -175,22 +247,48 @@ export default function CommandCenter({ mission, events, onShowDetails }: Props)
                   FORM: "📝", ANALYSIS: "🔍", RESEARCH: "🔎",
                 };
                 const live = a.uri?.startsWith("http");
+                const node = mission.nodes?.find((n: any) => n.node_id === a.node_id);
+                const o = node?.outputs || {};
+                const preview =
+                  (a.type === "DOC" && o.content_preview && <DocPreview md={o.content_preview} />) ||
+                  (a.type === "SHEET" && o.sheet_rows?.length && <SheetPreview rows={o.sheet_rows} />) ||
+                  (a.type === "SLIDES" && o.deck?.length && <DeckPreview deck={o.deck} />) ||
+                  ((a.type === "DRAFT" || a.type === "EMAIL") && o.email_preview && <EmailPreview e={o.email_preview} />) ||
+                  null;
+                const open = expanded === a.artifact_id;
                 return (
-                  <div key={a.artifact_id} className="flex items-center gap-2 text-xs">
-                    <span>{icon[a.type] || "•"}</span>
-                    <span className="font-bold text-zinc-300">{a.type}</span>
-                    {live ? (
-                      <a href={a.uri} target="_blank" rel="noreferrer"
-                        className="truncate text-emerald-400 underline hover:text-emerald-300">
-                        open →
-                      </a>
-                    ) : (
-                      <span className="text-zinc-600">produced (demo mode)</span>
+                  <div key={a.artifact_id} className="text-xs">
+                    <div className="flex items-center gap-2">
+                      <span>{icon[a.type] || "•"}</span>
+                      <span className="font-bold text-zinc-300">{a.type}</span>
+                      {live && (
+                        <a href={a.uri} target="_blank" rel="noreferrer"
+                          className="truncate text-emerald-400 underline hover:text-emerald-300">open →</a>
+                      )}
+                      {preview && (
+                        <button
+                          onClick={() => setExpanded(open ? null : a.artifact_id)}
+                          className="text-zinc-400 underline hover:text-zinc-200">
+                          {open ? "hide preview" : "preview"}
+                        </button>
+                      )}
+                      {!live && !preview && <span className="text-zinc-600">generated (demo mode)</span>}
+                    </div>
+                    {open && preview && (
+                      <div className="mt-2 max-h-80 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/60 p-3">
+                        {preview}
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
+            {!mission.workspace_uri?.startsWith("http") && (
+              <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                Previewing the real generated content. In <span className="text-zinc-300">LIVE mode</span> these
+                land as formatted files in your own Google Drive — connect an account to try it.
+              </p>
+            )}
           </div>
         )}
 

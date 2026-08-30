@@ -233,7 +233,7 @@ class NodeExecutor:
                 evidence_text=evidence_text)
             from nexora.providers.formatting import first_h1
             title = first_h1(content) or title
-            node.outputs["content_preview"] = content[:600]
+            node.outputs["content_preview"] = content[:4000]
             node.outputs["content_chars"] = len(content)
             try:
                 artifact = await provider.create_document(
@@ -329,6 +329,8 @@ class NodeExecutor:
             if named and placeholder:
                 to = named
             node.inputs["to"] = to
+            node.outputs["email_preview"] = {"to": to, "subject": subject,
+                                             "body": body[:4000]}
             if node.capability_id == "gmail.send":
                 artifact = await provider.send_email(to, subject, body)
             else:
@@ -357,7 +359,7 @@ class NodeExecutor:
                 persona=persona_for_capability("docs.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=evidence_text)
-            node.outputs["content_preview"] = content[:600]
+            node.outputs["content_preview"] = content[:4000]
             artifact = await provider.create_document(mission_id, node.node_id, title, content)
         elif node.capability_id == "sheets.write":
             composed = await self.composer.compose_sheet(
@@ -418,6 +420,9 @@ class NodeExecutor:
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=self._summarize_upstream(mission, node))
             node.outputs["slide_count"] = len(deck)
+            node.outputs["deck"] = [{"title": s.get("title", ""),
+                                     "bullets": [str(b) for b in (s.get("bullets") or [])]}
+                                    for s in deck][:20]
             try:
                 artifact = await provider.create_slides(
                     mission_id, node.node_id, title, deck,
