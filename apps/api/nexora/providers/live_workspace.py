@@ -628,33 +628,37 @@ class LiveWorkspaceProvider:
                 img_bytes = base64.b64decode(raw) if isinstance(raw, str) else raw
             except Exception:
                 img_bytes = None
+        text_hint = attachment.get("text") or attachment.get("caption") or ""
         try:
             from google.genai import types
             from nexora.core.llm_client import genai_client, llm_available
             model = os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash")
-            if llm_available() and img_bytes:
+            if llm_available() and (img_bytes or text_hint):
                 client = genai_client()
-                prompt = ("Analyze this screenshot/image. Extract any error codes, stack traces, "
-                          "UI state, and what the user is seeing. Return JSON: "
-                          '{"error_code": "...", "summary": "...", "visual_evidence": "..."}')
-                resp = await client.aio.models.generate_content(
-                    model=model,
-                    contents=[types.Part.from_bytes(data=img_bytes, mime_type=attachment.get("type", "image/png")),
-                              prompt])
+                instr = ("Analyze the attachment. Extract any error codes, stack traces, "
+                         "UI state, and what the user is seeing. Return ONLY JSON: "
+                         '{"error_code": "...", "summary": "...", "visual_evidence": "..."}')
+                if img_bytes:
+                    contents = [types.Part.from_bytes(
+                        data=img_bytes, mime_type=attachment.get("type", "image/png")), instr]
+                    analyzed_by = "Gemini Vision"
+                else:
+                    contents = [f"{instr}\n\nAttachment text:\n{text_hint}"]
+                    analyzed_by = "Gemini"
+                resp = await client.aio.models.generate_content(model=model, contents=contents)
                 txt = resp.text or ""
                 import json as _json, re as _re
                 m = _re.search(r"\{.*\}", txt, _re.S)
                 parsed = _json.loads(m.group(0)) if m else {}
-                error_code = parsed.get("error_code") or "UNKNOWN"
                 art = Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
                                type="ANALYSIS", provider="live", resource_id=f"vision_{node_id}",
                                uri=f"vision://{node_id}")
-                return {"error_code": error_code,
+                return {"error_code": parsed.get("error_code") or "UNKNOWN",
                         "timestamp": "", "visual_evidence": parsed.get("visual_evidence", txt[:400]),
-                        "summary": parsed.get("summary", ""), "analyzed_by": "Gemini Vision",
+                        "summary": parsed.get("summary", ""), "analyzed_by": analyzed_by,
                         "artifact": art}
         except Exception as e:
-            _log.warning(f"Gemini Vision failed: {e}. Falling back to mock analysis.")
+            _log.warning(f"Gemini attachment analysis failed: {e}. Falling back to mock.")
         from nexora.providers.mock_workspace import MockWorkspaceProvider
         return await MockWorkspaceProvider().analyze_attachment(mission_id, node_id, attachment)
 
