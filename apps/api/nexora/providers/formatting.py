@@ -12,10 +12,18 @@ import html as _html
 import re
 from typing import Dict, List, Tuple
 
-# NEXORA accent palette
+# NEXORA brand palette
 ACCENT = {"red": 0.153, "green": 0.463, "blue": 0.412}      # deep teal-green #277668
+ACCENT_DEEP = {"red": 0.086, "green": 0.286, "blue": 0.259}  # #16493f  (title-slide bg)
+ACCENT_TINT = {"red": 0.925, "green": 0.965, "blue": 0.957}  # #ecf6f4  (soft fills)
 INK = {"red": 0.11, "green": 0.12, "blue": 0.13}
 MUTED = {"red": 0.42, "green": 0.45, "blue": 0.49}
+WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
+
+# Typography — Google Fonts present in the Docs/Slides font menu by default.
+FONT_HEAD = "Poppins"
+FONT_BODY = "Lora"
+EMU_IN = 914400  # English Metric Units per inch (Slides geometry)
 
 
 # ------------------------------------------------------------------ Markdown model
@@ -149,35 +157,61 @@ def markdown_to_docs_requests(md: str, title: str) -> List[Dict]:
             style_ops.append({"type": "bold", "range": (start + bs, start + be)})
 
     full_text = "".join(running)
+    doc_end = 1 + len(full_text)
     requests.append({"insertText": {"location": {"index": 1}, "text": full_text}})
 
-    # Title styling
+    # Document-wide body typography: a warm serif at a comfortable rhythm.
+    requests.append({"updateTextStyle": {
+        "range": {"startIndex": 1, "endIndex": doc_end},
+        "textStyle": {"weightedFontFamily": {"fontFamily": FONT_BODY},
+                      "fontSize": {"magnitude": 11, "unit": "PT"},
+                      "foregroundColor": {"color": {"rgbColor": INK}}},
+        "fields": "weightedFontFamily,fontSize,foregroundColor"}})
+    requests.append({"updateParagraphStyle": {
+        "range": {"startIndex": 1, "endIndex": doc_end},
+        "paragraphStyle": {"lineSpacing": 118,
+                           "spaceBelow": {"magnitude": 8, "unit": "PT"}},
+        "fields": "lineSpacing,spaceBelow"}})
+
+    # Title — large display type, accent colour, with a hairline rule beneath it.
     requests.append({"updateParagraphStyle": {
         "range": {"startIndex": title_range[0], "endIndex": title_range[1] + 1},
-        "paragraphStyle": {"namedStyleType": "TITLE",
-                           "spaceBelow": {"magnitude": 12, "unit": "PT"}},
-        "fields": "namedStyleType,spaceBelow"}})
+        "paragraphStyle": {
+            "namedStyleType": "TITLE",
+            "spaceBelow": {"magnitude": 14, "unit": "PT"},
+            "borderBottom": {"color": {"color": {"rgbColor": ACCENT}},
+                             "width": {"magnitude": 2, "unit": "PT"},
+                             "padding": {"magnitude": 6, "unit": "PT"},
+                             "dashStyle": "SOLID"}},
+        "fields": "namedStyleType,spaceBelow,borderBottom"}})
     requests.append({"updateTextStyle": {
         "range": {"startIndex": title_range[0], "endIndex": title_range[1] + 1},
         "textStyle": {"foregroundColor": {"color": {"rgbColor": ACCENT}},
-                      "bold": True},
-        "fields": "foregroundColor,bold"}})
+                      "bold": True,
+                      "weightedFontFamily": {"fontFamily": FONT_HEAD},
+                      "fontSize": {"magnitude": 26, "unit": "PT"}},
+        "fields": "foregroundColor,bold,weightedFontFamily,fontSize"}})
 
+    _HSIZE = {1: 17, 2: 13.5, 3: 11.5}
     for op in style_ops:
         s, e = op["range"]
         if op["type"] == "heading":
             named, _, _ = _DOCS_STYLE[op["level"]]
+            lvl = op["level"]
             requests.append({"updateParagraphStyle": {
                 "range": {"startIndex": s, "endIndex": e + 1},
                 "paragraphStyle": {"namedStyleType": named,
-                                   "spaceAbove": {"magnitude": 10, "unit": "PT"},
+                                   "spaceAbove": {"magnitude": 16 if lvl <= 2 else 10, "unit": "PT"},
                                    "spaceBelow": {"magnitude": 4, "unit": "PT"}},
                 "fields": "namedStyleType,spaceAbove,spaceBelow"}})
-            if op["level"] <= 2:
-                requests.append({"updateTextStyle": {
-                    "range": {"startIndex": s, "endIndex": e + 1},
-                    "textStyle": {"foregroundColor": {"color": {"rgbColor": ACCENT}}},
-                    "fields": "foregroundColor"}})
+            requests.append({"updateTextStyle": {
+                "range": {"startIndex": s, "endIndex": e + 1},
+                "textStyle": {
+                    "weightedFontFamily": {"fontFamily": FONT_HEAD},
+                    "bold": True,
+                    "fontSize": {"magnitude": _HSIZE.get(lvl, 11.5), "unit": "PT"},
+                    "foregroundColor": {"color": {"rgbColor": ACCENT if lvl <= 2 else INK}}},
+                "fields": "weightedFontFamily,bold,fontSize,foregroundColor"}})
         elif op["type"] == "bold":
             requests.append({"updateTextStyle": {
                 "range": {"startIndex": s, "endIndex": e},
@@ -230,23 +264,29 @@ def markdown_to_html(md: str, *, title: str = "", preheader: str = "") -> str:
                         f'{_html_inline(blk["text"])}</p>')
     close_list()
 
+    stack = ("'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,"
+             "'Helvetica Neue',sans-serif")
     return f"""\
-<!doctype html><html><body style="margin:0;background:#f4f5f7;
- font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937">
-<span style="display:none;max-height:0;overflow:hidden">{_html.escape(preheader)}</span>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7">
-<tr><td align="center" style="padding:32px 16px">
+<!doctype html><html><body style="margin:0;padding:0;background:#eef1f0;
+ font-family:{stack};color:#1f2937;-webkit-font-smoothing:antialiased">
+<span style="display:none;max-height:0;overflow:hidden;opacity:0">{_html.escape(preheader)}</span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f0">
+<tr><td align="center" style="padding:40px 16px">
   <table role="presentation" width="600" cellpadding="0" cellspacing="0"
-   style="max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;
-   box-shadow:0 1px 3px rgba(16,24,40,.08)">
-    <tr><td style="background:#277668;padding:20px 28px">
-      <div style="color:#fff;font-weight:700;letter-spacing:.14em;font-size:12px">NEXORA</div>
-      <div style="color:#d6efe9;font-size:18px;font-weight:700;margin-top:4px">
+   style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;
+   box-shadow:0 6px 24px rgba(16,24,40,.10),0 1px 2px rgba(16,24,40,.06)">
+    <tr><td style="background:linear-gradient(135deg,#277668,#16493f);padding:26px 32px">
+      <div style="color:#bfe6dd;font-weight:700;letter-spacing:.22em;font-size:11px">
+        N E X O R A</div>
+      <div style="color:#ffffff;font-size:21px;font-weight:700;line-height:1.3;margin-top:8px">
         {_html.escape(title)}</div>
     </td></tr>
-    <tr><td style="padding:24px 28px 8px">{''.join(body)}</td></tr>
-    <tr><td style="padding:16px 28px 26px;border-top:1px solid #eef0f2">
-      <div style="color:#8a9099;font-size:12px">Prepared autonomously by NEXORA.</div>
+    <tr><td style="height:4px;background:#8fd0c3"></td></tr>
+    <tr><td style="padding:28px 32px 12px;font-size:15px">{''.join(body)}</td></tr>
+    <tr><td style="padding:18px 32px 28px;border-top:1px solid #eef0f2">
+      <div style="color:#8a9099;font-size:12px;line-height:1.6">
+        Researched, written, and checked against a success contract by
+        <strong style="color:#277668">NEXORA</strong> — an autonomous agent workforce.</div>
     </td></tr>
   </table>
 </td></tr></table></body></html>"""
@@ -289,6 +329,19 @@ def slide_deck_requests(deck: List[Dict], title: str, subtitle: str = "") -> Tup
     if lead_sub:
         text.append({"insertText": {"objectId": "nx_ttl_sub", "text": lead_sub[:200]}})
 
+    # Title-slide type: white on the deep-accent background painted in the theme pass.
+    text.append({"updateTextStyle": {
+        "objectId": "nx_ttl_title", "textRange": {"type": "ALL"},
+        "style": {"foregroundColor": {"opaqueColor": {"rgbColor": WHITE}}, "bold": True,
+                  "fontFamily": FONT_HEAD, "fontSize": {"magnitude": 34, "unit": "PT"}},
+        "fields": "foregroundColor,bold,fontFamily,fontSize"}})
+    if lead_sub:
+        text.append({"updateTextStyle": {
+            "objectId": "nx_ttl_sub", "textRange": {"type": "ALL"},
+            "style": {"foregroundColor": {"opaqueColor": {"rgbColor": ACCENT_TINT}},
+                      "fontFamily": FONT_BODY, "fontSize": {"magnitude": 14, "unit": "PT"}},
+            "fields": "foregroundColor,fontFamily,fontSize"}})
+
     for i, slide in enumerate(deck[1:] if deck else []):
         sid, tid, bid = f"nx_slide_{i:02d}", f"nx_title_{i:02d}", f"nx_body_{i:02d}"
         struct.append({"createSlide": {"objectId": sid,
@@ -297,29 +350,59 @@ def slide_deck_requests(deck: List[Dict], title: str, subtitle: str = "") -> Tup
                                            {"layoutPlaceholder": {"type": "TITLE"}, "objectId": tid},
                                            {"layoutPlaceholder": {"type": "BODY"}, "objectId": bid}]}})
         text.append({"insertText": {"objectId": tid, "text": str(slide.get("title", ""))[:160]}})
+        text.append({"updateTextStyle": {
+            "objectId": tid, "textRange": {"type": "ALL"},
+            "style": {"foregroundColor": {"opaqueColor": {"rgbColor": ACCENT}}, "bold": True,
+                      "fontFamily": FONT_HEAD, "fontSize": {"magnitude": 22, "unit": "PT"}},
+            "fields": "foregroundColor,bold,fontFamily,fontSize"}})
         bullets = [str(b) for b in (slide.get("bullets") or [])]
         if bullets:
             text.append({"insertText": {"objectId": bid, "text": "\n".join(bullets)}})
             text.append({"createParagraphBullets": {
                 "objectId": bid, "textRange": {"type": "ALL"},
                 "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"}})
+            text.append({"updateTextStyle": {
+                "objectId": bid, "textRange": {"type": "ALL"},
+                "style": {"fontFamily": FONT_BODY, "fontSize": {"magnitude": 15, "unit": "PT"},
+                          "foregroundColor": {"opaqueColor": {"rgbColor": INK}}},
+                "fields": "fontFamily,fontSize,foregroundColor"}})
+            text.append({"updateParagraphStyle": {
+                "objectId": bid, "textRange": {"type": "ALL"},
+                "style": {"lineSpacing": 130, "spaceBelow": {"magnitude": 6, "unit": "PT"}},
+                "fields": "lineSpacing,spaceBelow"}})
 
     return struct, text
 
 
 def slide_theme_requests(presentation: Dict) -> List[Dict]:
-    """Recolor title text on every slide to the accent and enlarge it a touch."""
+    """Second pass over the created deck: paint the title slide, and give every
+    content slide a slim accent bar down its left edge."""
     reqs: List[Dict] = []
-    for s in presentation.get("slides", []):
-        for el in s.get("pageElements", []):
-            shape = el.get("shape", {})
-            ph = shape.get("placeholder", {})
-            if ph.get("type") in ("TITLE", "CENTERED_TITLE"):
-                reqs.append({"updateTextStyle": {
-                    "objectId": el["objectId"], "textRange": {"type": "ALL"},
-                    "style": {"foregroundColor": {"opaqueColor": {"rgbColor": ACCENT}},
-                              "bold": True},
-                    "fields": "foregroundColor,bold"}})
+    slides = presentation.get("slides", [])
+    for idx, s in enumerate(slides):
+        sid = s["objectId"]
+        is_title = idx == 0
+        if is_title:
+            reqs.append({"updatePageProperties": {
+                "objectId": sid,
+                "pageProperties": {"pageBackgroundFill": {"solidFill": {
+                    "color": {"rgbColor": ACCENT_DEEP}}}},
+                "fields": "pageBackgroundFill.solidFill.color"}})
+            continue
+        bar_id = f"nx_bar_{idx:02d}"
+        reqs.append({"createShape": {
+            "objectId": bar_id, "shapeType": "RECTANGLE",
+            "elementProperties": {
+                "pageObjectId": sid,
+                "size": {"width": {"magnitude": 168000, "unit": "EMU"},
+                         "height": {"magnitude": 6858000, "unit": "EMU"}},
+                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0,
+                              "translateY": 0, "unit": "EMU"}}}})
+        reqs.append({"updateShapeProperties": {
+            "objectId": bar_id,
+            "shapeProperties": {"shapeBackgroundFill": {"solidFill": {
+                "color": {"rgbColor": ACCENT}}}, "outline": {"propertyState": "NOT_RENDERED"}},
+            "fields": "shapeBackgroundFill.solidFill.color,outline.propertyState"}})
     return reqs
 
 

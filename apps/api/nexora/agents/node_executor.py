@@ -56,6 +56,40 @@ class NodeExecutor:
             return mission.goal
         return node.inputs.get("title") or node.inputs.get("objective") or ""
 
+    # Which contract deliverable does this node produce? Match by capability so the
+    # composer writes ONE thing and never restates the deck / sheet / email.
+    _CAP_DELIVERABLE_HINTS = {
+        "docs.create": ("document", "guide", "doc", "report", "plan", "brief", "write-up", "summary", "itinerary", "roadmap"),
+        "docs.update": ("document", "guide", "doc", "report", "plan", "brief"),
+        "slides.create": ("slide", "deck", "presentation", "pitch"),
+        "sheets.create": ("spreadsheet", "sheet", "budget", "tracker", "table", "breakdown", "model"),
+        "sheets.write": ("spreadsheet", "sheet", "budget", "tracker", "table"),
+        "gmail.send": ("email", "message", "note", "mail"),
+        "gmail.draft": ("email", "draft", "message", "mail"),
+        "imagen.generate_image": ("image", "photo", "visual", "picture", "illustration"),
+    }
+
+    @classmethod
+    def _deliverable_brief(cls, mission, node) -> str:
+        """The single contract deliverable this node is responsible for, phrased
+        so the composer produces exactly that and nothing else."""
+        oc = getattr(mission, "outcome_contract", None) if mission else None
+        items = []
+        if oc is not None:
+            items = getattr(oc, "required_deliverables", None) or (
+                oc.get("required_deliverables", []) if isinstance(oc, dict) else [])
+        hints = cls._CAP_DELIVERABLE_HINTS.get(node.capability_id, ())
+        for d in items:
+            if any(h in str(d).lower() for h in hints):
+                return str(d)
+        # No contract match — fall back to a capability-shaped noun phrase.
+        kind = {"docs.create": "document", "docs.update": "document",
+                "slides.create": "slide deck", "sheets.create": "spreadsheet",
+                "sheets.write": "spreadsheet", "gmail.send": "email",
+                "gmail.draft": "email"}.get(node.capability_id, "deliverable")
+        obj = cls._objective(mission, node)
+        return f"the {kind} for: {obj}" if obj else f"the {kind}"
+
     @staticmethod
     def _summarize_upstream(mission, node) -> str:
         """Build doc content from upstream search/research outputs (Phase 9)."""
@@ -180,6 +214,7 @@ class NodeExecutor:
             title = self._clean_title(node.inputs.get("title", "Document"), mission, node)
             content = await self.composer.compose_document(
                 title=title, objective=self._objective(mission, node),
+                deliverable=self._deliverable_brief(mission, node),
                 persona=persona_for_capability("docs.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=evidence_text)
@@ -254,17 +289,28 @@ class NodeExecutor:
         elif node.capability_id in ("gmail.send", "gmail.draft"):
             body = node.inputs.get("body", "")
             subject = node.inputs.get("subject", "")
-            if not body or body in ("Status update...", ""):
+            _weak_subj = (not subject or subject.startswith(("Update:", "Update -", "Re:", "Status")))
+            if not body or body in ("Status update...", "") or _weak_subj:
                 composed = await self.composer.compose_email(
                     objective=self._objective(mission, node),
-                    purpose=node.inputs.get("purpose", subject),
+                    deliverable=self._deliverable_brief(mission, node),
+                    purpose=node.inputs.get("purpose", "" if _weak_subj else subject),
                     persona=persona_for_capability("gmail.send"),
                     contract=getattr(mission, "outcome_contract", None) if mission else None,
                     evidence_text=self._summarize_upstream(mission, node))
-                body = composed["body_markdown"]
-                subject = subject or composed["subject"]
+                if not body or body in ("Status update...", ""):
+                    body = composed["body_markdown"]
+                if _weak_subj:
+                    subject = composed["subject"]
                 node.inputs["body"], node.inputs["subject"] = body, subject
             to = node.inputs.get("to", [])
+            # The goal may name the real recipient(s); the planner only had a placeholder.
+            from nexora.core.extractors import emails as _emails
+            named = _emails(self._objective(mission, node))
+            placeholder = (not to) or any("acme.dev" in str(t) or "example.com" in str(t) for t in to)
+            if named and placeholder:
+                to = named
+            node.inputs["to"] = to
             if node.capability_id == "gmail.send":
                 artifact = await provider.send_email(to, subject, body)
             else:
@@ -289,6 +335,7 @@ class NodeExecutor:
             title = node.inputs.get("title", "Document")
             content = await self.composer.compose_document(
                 title=title, objective=self._objective(mission, node),
+                deliverable=self._deliverable_brief(mission, node),
                 persona=persona_for_capability("docs.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=evidence_text)
@@ -298,6 +345,7 @@ class NodeExecutor:
             composed = await self.composer.compose_sheet(
                 title=node.inputs.get("title", "Spreadsheet"),
                 objective=self._objective(mission, node),
+                deliverable=self._deliverable_brief(mission, node),
                 persona=persona_for_capability("sheets.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=self._summarize_upstream(mission, node),
@@ -313,6 +361,7 @@ class NodeExecutor:
             title = self._clean_title(node.inputs.get("title", "Spreadsheet"), mission, node)
             composed = await self.composer.compose_sheet(
                 title=title, objective=self._objective(mission, node),
+                deliverable=self._deliverable_brief(mission, node),
                 persona=persona_for_capability("sheets.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=self._summarize_upstream(mission, node),
@@ -323,13 +372,30 @@ class NodeExecutor:
         elif node.capability_id == "sheets.read":
             node.outputs["rows"] = await provider.read_sheet(node.inputs.get("sheet_id", ""), node.inputs.get("range", ""))
         elif node.capability_id == "calendar.create_event":
-            artifact = await provider.create_event(mission_id, node.node_id, node.inputs.get("title", "Meeting"), node.inputs.get("attendees", []))
+            from nexora.core.extractors import emails as _emails, event_datetime as _when
+            goal = self._objective(mission, node)
+            attendees = [a for a in node.inputs.get("attendees", [])
+                         if "acme.dev" not in str(a) and "example.com" not in str(a)]
+            attendees = list(dict.fromkeys(attendees + _emails(goal)))
+            when = _when(goal)
+            title = self._clean_title(node.inputs.get("title", ""), mission, node)
+            for junk in ("Sync - ", "Meeting - ", "Call - ", "Sync-", "Meeting:"):
+                if title.startswith(junk):
+                    title = title[len(junk):]
+            title = (title or "Project kickoff sync").strip()[:80]
+            desc = (self._summarize_upstream(mission, node) or goal)[:1500]
+            artifact = await provider.create_event(
+                mission_id, node.node_id, title, attendees,
+                start=when.isoformat() if when else None, description=desc)
+            node.outputs["event"] = {"title": title, "attendees": attendees,
+                                     "start": when.isoformat() if when else "tomorrow 10:00"}
         elif node.capability_id == "tasks.create":
             artifact = await provider.create_task(mission_id, node.node_id, node.inputs.get("title", "Task"), node.inputs.get("notes", ""))
         elif node.capability_id == "slides.create":
             title = self._clean_title(node.inputs.get("title", "Presentation"), mission, node)
             deck = await self.composer.compose_slides(
                 title=title, objective=self._objective(mission, node),
+                deliverable=self._deliverable_brief(mission, node),
                 persona=persona_for_capability("slides.create"),
                 contract=getattr(mission, "outcome_contract", None) if mission else None,
                 evidence_text=self._summarize_upstream(mission, node))

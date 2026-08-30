@@ -347,28 +347,42 @@ class LiveWorkspaceProvider:
                         type="SHEET", provider="live", resource_id=sheet_id, uri=uri)
 
     # ---------------- Google Calendar ----------------
-    async def create_event(self, mission_id: str, node_id: str, title: str, attendees: List[str]) -> Artifact:
+    async def create_event(self, mission_id: str, node_id: str, title: str,
+                           attendees: List[str], start=None, description: str = "",
+                           duration_min: int = 60) -> Artifact:
         service = await self._build_service('calendar', 'v3')
         from datetime import datetime, timedelta
 
         def _create():
-            # Default to tomorrow at 10 AM for 1 hour
-            start_time = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            end_time = start_time + timedelta(hours=1)
-
+            cal = service.calendars().get(calendarId='primary').execute()
+            tz = cal.get('timeZone', 'UTC')
+            s = start
+            if isinstance(s, str) and s:
+                s = datetime.fromisoformat(s)
+            if not isinstance(s, datetime):
+                s = (datetime.now() + timedelta(days=1)).replace(
+                    hour=10, minute=0, second=0, microsecond=0)
+            e = s + timedelta(minutes=duration_min)
             event = {
                 'summary': title,
-                'start': {'dateTime': start_time.isoformat(), 'timeZone': 'UTC'},
-                'end': {'dateTime': end_time.isoformat(), 'timeZone': 'UTC'},
-                'attendees': [{'email': a} for a in attendees],
-                'conferenceData': {'createRequest': {'requestId': str(uuid.uuid4()), 'conferenceSolutionKey': {'type': 'hangoutsMeet'}}}
+                'description': description or '',
+                'start': {'dateTime': s.isoformat(), 'timeZone': tz},
+                'end': {'dateTime': e.isoformat(), 'timeZone': tz},
+                'attendees': [{'email': a} for a in attendees if a],
+                'conferenceData': {'createRequest': {
+                    'requestId': str(uuid.uuid4()),
+                    'conferenceSolutionKey': {'type': 'hangoutsMeet'}}},
+                'reminders': {'useDefault': True},
             }
-            res = service.events().insert(calendarId='primary', body=event, conferenceDataVersion=1).execute()
-            return res['id'], res.get('htmlLink', '')
+            res = service.events().insert(
+                calendarId='primary', body=event,
+                conferenceDataVersion=1, sendUpdates='all').execute()
+            return res['id'], res.get('htmlLink', ''), res.get('hangoutLink', '')
 
-        event_id, uri = await asyncio.to_thread(_create)
+        event_id, uri, meet = await asyncio.to_thread(_create)
         return Artifact(artifact_id=str(uuid.uuid4()), mission_id=mission_id, node_id=node_id,
-                        type="EVENT", provider="live", resource_id=event_id, uri=uri)
+                        type="EVENT", provider="live", resource_id=event_id,
+                        uri=meet or uri)
 
     # ---------------- Image generation (Gemini / Imagen via GenAI SDK) ----------------
     async def generate_image(self, mission_id: str, node_id: str, prompt: str) -> Artifact:

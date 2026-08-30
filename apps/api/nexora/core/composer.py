@@ -38,6 +38,32 @@ def _contract_text(contract) -> str:
     return str(contract)
 
 
+_PLACEHOLDER = re.compile(
+    r"\[\s*(?:your|my|the|insert|full)?\s*"
+    r"(?:name|full name|first name|last name|position|title|role|company|"
+    r"organization|organisation|team|department|date|time|location|address|"
+    r"phone|email|e-?mail|signature|sender|recipient|contact|city|budget|number|"
+    r"link|url|placeholder)\s*\]",
+    re.I,
+)
+_DANGLING_SIGNOFF = re.compile(
+    r"\n+(?:best|regards|best regards|sincerely|thanks|thank you|cheers|warm regards)\s*,?\s*\n\s*$",
+    re.I,
+)
+
+
+def _clean_output(text: str) -> str:
+    """Strip template placeholders like [Your Name] and fix a now-empty sign-off."""
+    if not text:
+        return text
+    text = _PLACEHOLDER.sub("", text)
+    # "Best,\n" left hanging with nothing after it -> a clean NEXORA sign-off.
+    text = _DANGLING_SIGNOFF.sub("\n\n— NEXORA\n", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _extract_json(text: str):
     """Pull the first JSON object/array out of an LLM response."""
     if not text:
@@ -93,10 +119,19 @@ class ArtifactComposer:
     # ---------------- document ----------------
     async def compose_document(self, *, title: str, objective: str,
                                persona: Optional[Persona | str] = None,
-                               contract=None, evidence_text: str = "") -> str:
+                               contract=None, evidence_text: str = "",
+                               deliverable: str = "") -> str:
+        scope = deliverable or title
         prompt = (
-            f"Write the FULL body of ONE deliverable: \"{title}\".\n"
-            f"User goal: {objective}\n\n"
+            f"You are producing EXACTLY ONE deliverable and nothing else:\n"
+            f"  «{scope}»\n"
+            f"The user's overall goal (context only) is: {objective}\n\n"
+            f"CRITICAL: other deliverables (a slide deck, a spreadsheet, an email, "
+            f"an image) are produced SEPARATELY by other specialists. This document "
+            f"must NOT contain them. Do not write sections titled 'Slide 1', "
+            f"'Slide 2', 'Draft Email', 'Summary Email', 'Budget Spreadsheet', "
+            f"'Hero Image', or similar. Do not paste an email body or a budget "
+            f"table. Write only the «{scope}».\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
             + ("MATERIAL RETRIEVED FROM THE USER'S OWN WORKSPACE (emails, files, "
                "calendar) AND FROM THE WEB — this is real, already-fetched data; "
@@ -125,7 +160,7 @@ class ArtifactComposer:
         )
         text = await self._call(prompt, persona)
         if text and len(text.strip()) > 120:
-            return text.strip()
+            return _clean_output(text)
         return self._fallback_document(title, objective, contract, evidence_text)
 
     def _fallback_document(self, title, objective, contract, evidence_text) -> str:
@@ -144,17 +179,21 @@ class ArtifactComposer:
     # ---------------- slides ----------------
     async def compose_slides(self, *, title: str, objective: str,
                              persona: Optional[Persona | str] = None,
-                             contract=None, evidence_text: str = "") -> List[Dict[str, Any]]:
+                             contract=None, evidence_text: str = "",
+                             deliverable: str = "") -> List[Dict[str, Any]]:
         prompt = (
-            f"Design a concise slide deck titled \"{title}\".\n"
-            f"User goal: {objective}\n\n"
+            f"Design the slide deck — and ONLY the slide deck — for: «{deliverable or title}».\n"
+            f"Overall goal (context only): {objective}\n"
+            f"The written document, the spreadsheet and any email are produced "
+            f"separately; this deck stands on its own as a visual narrative.\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
             f"Evidence gathered so far:\n{evidence_text or '(rely on well-established knowledge)'}\n\n"
             "Return ONLY JSON: a list of 5-9 slides, each "
             '{"title": "...", "bullets": ["...", "..."]}.\n'
-            "Rules: first slide is a title/agenda slide; one idea per slide; "
-            "3-5 short bullets per slide; concrete details, not filler; "
-            "last slide is 'Next steps' with actionable items."
+            "Rules: first slide is the title slide (its bullets are a one-line "
+            "framing, not an agenda); one idea per slide; 3-5 punchy bullets of "
+            "6-12 words each; concrete specifics, never filler; the last slide is "
+            "'Next steps' with actionable items. No placeholders like [Name]."
         )
         data = _extract_json(await self._call(prompt, persona) or "")
         slides: List[Dict[str, Any]] = []
@@ -162,8 +201,8 @@ class ArtifactComposer:
             for item in data:
                 if isinstance(item, dict) and item.get("title"):
                     bullets = item.get("bullets") or []
-                    slides.append({"title": str(item["title"]),
-                                   "bullets": [str(b) for b in bullets][:6]})
+                    slides.append({"title": _clean_output(str(item["title"])),
+                                   "bullets": [_clean_output(str(b)) for b in bullets][:6]})
         if slides:
             return slides
         return self._fallback_slides(title, objective, evidence_text)
@@ -181,10 +220,11 @@ class ArtifactComposer:
     async def compose_sheet(self, *, title: str, objective: str,
                             persona: Optional[Persona | str] = None,
                             contract=None, evidence_text: str = "",
-                            headers: Optional[List[str]] = None) -> Dict[str, Any]:
+                            headers: Optional[List[str]] = None,
+                            deliverable: str = "") -> Dict[str, Any]:
         prompt = (
-            f"Build the data for a spreadsheet titled \"{title}\".\n"
-            f"User goal: {objective}\n\n"
+            f"Build the data for ONLY this deliverable: «{deliverable or title}».\n"
+            f"Overall goal (context only): {objective}\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
             f"Evidence gathered so far:\n{evidence_text or '(use realistic, clearly-labelled estimates)'}\n\n"
             "Return ONLY JSON: {\"headers\": [...], \"rows\": [[...], ...], \"notes\": \"...\"}.\n"
@@ -217,23 +257,26 @@ class ArtifactComposer:
     # ---------------- email ----------------
     async def compose_email(self, *, objective: str, purpose: str = "",
                             persona: Optional[Persona | str] = None,
-                            contract=None, evidence_text: str = "") -> Dict[str, str]:
+                            contract=None, evidence_text: str = "",
+                            deliverable: str = "") -> Dict[str, str]:
         prompt = (
-            f"Draft a professional email that advances this goal:\n{objective}\n"
-            + (f"Specific purpose of this email: {purpose}\n" if purpose else "")
+            f"Write ONLY this email: «{deliverable or purpose or objective}».\n"
+            f"Overall goal (context only): {objective}\n"
+            + (f"Purpose of this specific email: {purpose}\n" if purpose else "")
             + f"\nContext / findings:\n{evidence_text or '(rely on the goal)'}\n\n"
             "Return ONLY JSON: {\"subject\": \"...\", \"body_markdown\": \"...\"}.\n"
-            "Rules: subject under 80 chars; body is tight Markdown with a greeting, "
-            "2-4 short paragraphs or a short bullet list, and a clear ask or next step; "
-            "no placeholders like [Name] unless truly unknown; sign off as 'NEXORA'."
+            "Rules: subject under 80 chars, specific (no 'Update:' / 'Re:'); body is "
+            "tight Markdown — a greeting, 2-4 short paragraphs OR a short bullet "
+            "list, then one clear next step. Never use bracketed placeholders "
+            "([Name], [Date], [Your Name]) — omit anything you don't know. Do not "
+            "restate the other deliverables. Sign off exactly:\n\n— NEXORA"
         )
         data = _extract_json(await self._call(prompt, persona or "Coordinator") or "")
         if isinstance(data, dict) and data.get("body_markdown"):
-            return {"subject": str(data.get("subject") or objective)[:120],
-                    "body_markdown": str(data["body_markdown"])}
+            return {"subject": _clean_output(str(data.get("subject") or objective))[:120],
+                    "body_markdown": _clean_output(str(data["body_markdown"]))}
         return {"subject": (purpose or objective)[:120],
-                "body_markdown": (f"Hi,\n\n{evidence_text or objective}\n\n"
-                                  "Best,\nNEXORA")}
+                "body_markdown": (f"Hi,\n\n{evidence_text or objective}\n\n— NEXORA")}
 
     # ---------------- media prompts ----------------
     async def compose_media_prompt(self, *, kind: str, objective: str,

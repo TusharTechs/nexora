@@ -124,12 +124,13 @@ class MockWorkspaceProvider:
         await self._enter("sheets.read")
         return self._sheet_metrics
 
-    async def create_event(self, mission_id, node_id, title, attendees) -> Artifact:
+    async def create_event(self, mission_id, node_id, title, attendees,
+                           start=None, description="", duration_min=60) -> Artifact:
         await self._enter("calendar.create_event")
         persona = persona_for_capability("calendar.create_event")
-        description = f"Scheduled by NEXORA's {persona.role}.\n\nAgenda: TBD by organizer."
+        desc = description or f"Scheduled by NEXORA's {persona.role}."
         return self._art("EVENT", self._events, mission_id, node_id, title=title,
-                         attendees=attendees, description=description,
+                         attendees=attendees, description=desc, start=start or "tomorrow 10:00",
                          meet_link=f"mock://meet/{uuid.uuid4()}", persona=persona.role)
 
     async def create_task(self, mission_id, node_id, title, notes) -> Artifact:
