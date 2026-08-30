@@ -50,6 +50,12 @@ from nexora.benchmarks import BENCHMARKS, evaluate_mission
 
 @asynccontextmanager
 async def _lifespan(_app):
+    # Fix google-genai / ADK env once, up front (Vertex vs Gemini-API, key hiding).
+    try:
+        from nexora.core.adk_runtime import _configure_genai_env
+        _configure_genai_env()
+    except Exception:
+        pass
     # Names below are module globals bound further down; resolved at startup, not import.
     audit.record(AuditEntry(kind=AuditKind.NODE_EXECUTED, severity="INFO",
                             title="api.started", detail="NEXORA API started."))

@@ -439,6 +439,8 @@ class LiveWorkspaceProvider:
             try:
                 drive.permissions().create(
                     fileId=f["id"], body={"type": "anyone", "role": "reader"}).execute()
+                import time as _t
+                _t.sleep(2)  # let the public-read ACL propagate before an API fetch
             except Exception as e:
                 _log.warning(f"Image share-link permission skipped: {e}")
             return f["id"], f.get("webViewLink", f"https://drive.google.com/file/d/{f['id']}/view")
@@ -508,18 +510,26 @@ class LiveWorkspaceProvider:
             if text_reqs:
                 service.presentations().batchUpdate(
                     presentationId=pres_id, body={"requests": text_reqs}).execute()
-            # Theme pass: title-slide background, per-slide accent bar
+            # Theme pass: title-slide background, per-slide accent bar.
+            fresh = None
             try:
                 fresh = service.presentations().get(presentationId=pres_id).execute()
                 theme = slide_theme_requests(fresh)
-                if hero_image_id:
-                    from nexora.providers.formatting import hero_image_slide_requests
-                    theme += hero_image_slide_requests(fresh, hero_image_id)
                 if theme:
                     service.presentations().batchUpdate(
                         presentationId=pres_id, body={"requests": theme}).execute()
             except Exception as e:
                 _log.warning(f"Slide theme pass skipped: {e}")
+            # Hero image is its own batch so a fetch failure can't undo the theme.
+            if hero_image_id and fresh is not None:
+                try:
+                    from nexora.providers.formatting import hero_image_slide_requests
+                    reqs = hero_image_slide_requests(fresh, hero_image_id)
+                    if reqs:
+                        service.presentations().batchUpdate(
+                            presentationId=pres_id, body={"requests": reqs}).execute()
+                except Exception as e:
+                    _log.warning(f"Slide hero image skipped: {e}")
 
             if self._folder_id and self._folder_id != "root":
                 f = drive_service.files().get(fileId=pres_id, fields='parents').execute()

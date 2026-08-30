@@ -82,6 +82,9 @@ Rules:
   not a roadmap doc + a schedule doc + a self-assessment doc. Merge related
   outputs into a single deliverable unless the goal explicitly asks for them
   as separate files.
+- BUT if the goal itself enumerates distinct artifacts ("a document, a slide
+  deck, a spreadsheet, and an image"), produce exactly one required_deliverable
+  for each item the user listed — never merge items the user asked for by name.
 - Keep it concise: 1-6 deliverables, 2-5 success criteria, 1-4 evidence items.
 """
 

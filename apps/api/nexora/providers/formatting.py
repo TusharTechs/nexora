@@ -451,8 +451,10 @@ def sheet_format_requests(sheet_id: int, n_cols: int, n_rows: int,
 
 
 def drive_image_url(file_id: str) -> str:
-    """A link-readable Drive file rendered as a raw image, embeddable by Docs/Slides."""
-    return f"https://drive.google.com/uc?export=view&id={file_id}"
+    """A link-readable Drive image as a raw URL the Docs/Slides APIs can fetch.
+    lh3.googleusercontent.com is Google's own CDN for Drive media and is far more
+    reliable for server-side fetches than drive.google.com/uc."""
+    return f"https://lh3.googleusercontent.com/d/{file_id}"
 
 
 def hero_image_doc_requests(file_id: str) -> List[Dict]:

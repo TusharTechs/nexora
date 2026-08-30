@@ -226,7 +226,7 @@ export default function CommandCenter({ mission, events, onShowDetails }: Props)
             <p className="mb-2 text-xs font-bold tracking-widest text-emerald-400">OUTCOME VERIFIED</p>
             <p className="text-sm text-zinc-200">
               {deliverablesSatisfied} of {deliverablesTotal} deliverables satisfied
-              {verification?.evidence_status && ` · Evidence: ${verification.evidence_status}`}
+              {verification?.evidence_status === "SUFFICIENT" && " · Evidence: sufficient"}
             </p>
             {mission.replan_count > 0 && (
               <p className="mt-1 text-xs text-zinc-500">

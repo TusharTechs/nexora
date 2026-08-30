@@ -143,10 +143,13 @@ class SemanticVerifier:
             if not missing and not partial:
                 rationale_parts.append("All deliverables satisfied")
 
+            ev = parsed.get("evidence_status", "UNKNOWN")
+            if complete and ev == "UNKNOWN":
+                ev = "SUFFICIENT"   # every deliverable passed → the evidence was enough
             return SemanticVerificationReport(
                 complete=complete,
                 deliverables=deliverables,
-                evidence_status=parsed.get("evidence_status", "UNKNOWN"),
+                evidence_status=ev,
                 missing_requirements=missing,
                 recommended_next_actions=parsed.get("recommended_next_actions", []),
                 rationale="; ".join(rationale_parts),

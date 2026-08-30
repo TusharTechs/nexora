@@ -28,9 +28,16 @@ def _insecure() -> bool:
     return os.getenv("NEXORA_INSECURE_TLS", "") == "1"
 
 
+def gemini_api_key() -> str:
+    """The Gemini API key. NEXORA_GEMINI_API_KEY is the private stash the ADK
+    setup uses when it has to hide GEMINI_API_KEY from google-genai on the
+    Vertex path (see adk_runtime._configure_genai_env)."""
+    return os.getenv("GEMINI_API_KEY", "") or os.getenv("NEXORA_GEMINI_API_KEY", "")
+
+
 def llm_available() -> bool:
     """Env-level check: at least one backend configured."""
-    return bool(os.getenv("GEMINI_API_KEY", "")) or bool(os.getenv("GCP_PROJECT_ID", ""))
+    return bool(gemini_api_key()) or bool(os.getenv("GCP_PROJECT_ID", ""))
 
 
 class LLMClient:
@@ -57,7 +64,7 @@ class LLMClient:
             token_fn: Test seam — fake ADC token.
         """
         self.backend = backend if backend is not None else os.getenv("NEXORA_LLM_BACKEND", "auto")
-        self.gemini_key = gemini_key if gemini_key is not None else os.getenv("GEMINI_API_KEY", "")
+        self.gemini_key = gemini_key if gemini_key is not None else gemini_api_key()
         self.project = project if project is not None else os.getenv("GCP_PROJECT_ID", "")
         # Gemini text models on Vertex are served from the "global" endpoint;
         # regional media endpoints (Imagen/Veo/Lyria) use GCP_LOCATION separately.
@@ -221,7 +228,7 @@ def genai_client():
     from google import genai
     backend = os.getenv("NEXORA_LLM_BACKEND", "auto")
     project = os.getenv("GCP_PROJECT_ID", "")
-    key = os.getenv("GEMINI_API_KEY", "")
+    key = gemini_api_key()
     use_vertex = backend == "vertex" or (backend == "auto" and project and not key)
     if use_vertex and project:
         return genai.Client(vertexai=True, project=project,
