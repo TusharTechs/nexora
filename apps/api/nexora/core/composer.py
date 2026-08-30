@@ -64,6 +64,17 @@ def _clean_output(text: str) -> str:
     return text.strip()
 
 
+def _target_count(text: str):
+    """A slide count named in a brief ('10-slide deck', 'exactly 12 slides')."""
+    if not text:
+        return None
+    m = re.search(r"\b(\d{1,2})[\s-]*slide", text.lower())
+    if m:
+        n = int(m.group(1))
+        return n if 3 <= n <= 20 else None
+    return None
+
+
 def _extract_json(text: str):
     """Pull the first JSON object/array out of an LLM response."""
     if not text:
@@ -181,6 +192,9 @@ class ArtifactComposer:
                              persona: Optional[Persona | str] = None,
                              contract=None, evidence_text: str = "",
                              deliverable: str = "") -> List[Dict[str, Any]]:
+        target = _target_count(deliverable) or _target_count(_contract_text(contract))
+        count_rule = (f"Produce EXACTLY {target} slides (the title slide counts as slide 1)."
+                      if target else "Produce 8 to 11 slides.")
         prompt = (
             f"Design the slide deck — and ONLY the slide deck — for: «{deliverable or title}».\n"
             f"Overall goal (context only): {objective}\n"
@@ -188,12 +202,12 @@ class ArtifactComposer:
             f"separately; this deck stands on its own as a visual narrative.\n\n"
             f"What success looks like:\n{_contract_text(contract)}\n\n"
             f"Evidence gathered so far:\n{evidence_text or '(rely on well-established knowledge)'}\n\n"
-            "Return ONLY JSON: a list of 5-9 slides, each "
+            "Return ONLY JSON: a list of slides, each "
             '{"title": "...", "bullets": ["...", "..."]}.\n'
-            "Rules: first slide is the title slide (its bullets are a one-line "
-            "framing, not an agenda); one idea per slide; 3-5 punchy bullets of "
-            "6-12 words each; concrete specifics, never filler; the last slide is "
-            "'Next steps' with actionable items. No placeholders like [Name]."
+            f"Rules: {count_rule} First slide is the title slide (its bullets are a "
+            "one-line framing, not an agenda); one idea per slide; 3-5 punchy "
+            "bullets of 6-12 words each; concrete specifics, never filler; the last "
+            "slide is 'Next steps' with actionable items. No placeholders like [Name]."
         )
         data = _extract_json(await self._call(prompt, persona) or "")
         slides: List[Dict[str, Any]] = []
@@ -204,6 +218,8 @@ class ArtifactComposer:
                     slides.append({"title": _clean_output(str(item["title"])),
                                    "bullets": [_clean_output(str(b)) for b in bullets][:6]})
         if slides:
+            if target and len(slides) > target:      # trim overshoot, keep the closer
+                slides = slides[:target - 1] + [slides[-1]]
             return slides
         return self._fallback_slides(title, objective, evidence_text)
 

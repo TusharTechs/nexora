@@ -70,6 +70,9 @@ Rules:
   "a collection", or "images" (plural) — one image is what gets produced.
 - Every success_criterion must be checkable against the deliverables you listed.
   Do not require a quantity or format the listed deliverables cannot show.
+- Do NOT pin an exact artifact count in a success_criterion or deliverable
+  (no "exactly 10 slides", no "a 12-row table"). If the user named a number,
+  restate it as a soft target ("roughly a 10-slide deck"). Judge substance.
 - Do NOT include tool names (no "google docs", no "veo"). Describe outcomes, not tools.
 - SCOPE THE AMBITION TO THE GOAL. If the user says "short", "quick", "brief",
   "just", or asks for a single thing, return exactly 1-2 deliverables. Only a

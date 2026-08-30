@@ -82,6 +82,9 @@ Rules:
   deliverable PARTIAL merely because you cannot open the live file yourself.
 - Be strict about substance: PARTIAL only if the produced content genuinely
   misses part of the deliverable's success criteria.
+- Judge substance, not arithmetic. Do NOT mark a deliverable PARTIAL over an
+  exact-count miss (a 9-slide deck for a "10-slide" ask, an 11-row table for a
+  "12-row" ask) when the content covers what was asked.
 - recommended_next_actions should be concrete (e.g. "Add a risks section").
 - Keep reasons concise (one sentence).
 """
