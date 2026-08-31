@@ -9,7 +9,7 @@
 
 *All Things Agentic Hackathon — **Taskmaster** track*
 
-[Live demo](https://nexora-nexus.vercel.app) · [Demo video](#) · [Demo script](docs/DEMO.md) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
+[Live demo](https://nexora-mini.vercel.app) · [Demo video](#) · [Demo script](docs/DEMO.md) · [Architecture](#architecture) · [Try it offline](#run-it-locally)
 
 ![NEXORA architecture](docs/architecture.svg)
 
@@ -311,7 +311,7 @@ always‑warm instance — the reliable choice for a judge review.
 [ADR‑075](docs/adr/ADR-075-cloud-run-deployment-profiles.md). Terraform
 equivalent in [`infrastructure/terraform`](infrastructure/terraform).
 
-The running instance for this submission: **<https://nexora-nexus.vercel.app>**
+The running instance for this submission: **<https://nexora-mini.vercel.app>**
 (Command Center) → Cloud Run API → Vertex AI. `/api/v1/config` shows the live
 stack.
 

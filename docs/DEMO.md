@@ -19,7 +19,7 @@ Have them open in tabs / a video editor for the montage.
 
 | Tab | Where | Proves |
 |---|---|---|
-| **NEXORA** | `https://nexora-nexus.vercel.app` | the product |
+| **NEXORA** | `https://nexora-mini.vercel.app` | the product |
 | **Cloud Run** | console → Cloud Run → `nexora-api` | backend on Google Cloud |
 | **Agent Engine** | console → Vertex AI → Agent Engine → `nexora-agent-engine` | ADK on the agent platform |
 | **Cloud Build** | console → Cloud Build → History | reproducible deploy |
@@ -152,7 +152,7 @@ TTS, Gemma. A hundred and fifty-four tests, fifty-six architecture decisions on
 record. One sentence in — a folder of finished, verified work out, and it keeps
 working after you close the tab."*
 
-▸ SHOW  **NEXORA** · `nexora-nexus.vercel.app`
+▸ SHOW  **NEXORA** · `nexora-mini.vercel.app`
 
 ---
 
