@@ -271,12 +271,25 @@ cd apps/api && PYTHONPATH=../.. venv/bin/python -m pytest -q
 
 ### LIVE mode (real Google Workspace)
 
+**Locally:**
 1. Create an OAuth 2.0 Web client in Google Cloud console, redirect URI
    `http://localhost:8000/api/v1/auth/callback`.
-2. Put `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `apps/api/.env`, set
-   `EXECUTION_MODE=LIVE`.
-3. Visit `http://localhost:8000/api/v1/auth/google`, approve.
+2. Put `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `apps/api/.env`.
+3. In the Command Center, flip the toggle to **LIVE** and click **Connect Google**
+   (or visit `http://localhost:8000/api/v1/auth/google`), approve.
 4. Launch a mission — the deliverables land in a real Drive folder.
+
+**On the deployed service** (optional — the hosted demo runs MOCK by default,
+which uses the same Gemini reasoning and produces the same content):
+- Add `https://<your-run-url>/api/v1/auth/callback` to the OAuth client's
+  Authorized redirect URIs, and add reviewer emails as **Test users** on the
+  OAuth consent screen (the app is unverified).
+- Redeploy with the client set:
+  `PROJECT_ID=… GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… ./infrastructure/deploy.sh`
+  — `deploy.sh` stores them in Secret Manager and wires `NEXORA_OAUTH_REDIRECT`.
+- The site then shows **Connect Google**; a connected account runs LIVE missions
+  against that account's Drive/Calendar. Note: the demo instance holds one
+  connection at a time, so LIVE is best driven by one reviewer at a time.
 
 ## Deploy to Google Cloud
 

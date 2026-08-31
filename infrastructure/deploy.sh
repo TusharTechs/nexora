@@ -24,6 +24,11 @@ REPO="nexora"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/api:$(date +%Y%m%d-%H%M%S)"
 SA="nexora-api@${PROJECT_ID}.iam.gserviceaccount.com"
 GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+# Optional: enable the LIVE (real Google Workspace) OAuth flow on the deployed
+# service. Provide both to turn it on; add "<service-url>/api/v1/auth/callback"
+# to the OAuth client's Authorized redirect URIs first.
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 
 case "$PROFILE" in
   demo)  NEXORA_REPO=memory;    NEXORA_DISPATCHER=local ;;
@@ -117,14 +122,29 @@ if [ "$NEXORA_DISPATCHER" = "cloud" ]; then
   done
 fi
 
-SECRET_FLAG=()
+_SECRETS=""
+_put_secret() {  # name value  -> upsert, append to _SECRETS
+  printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --project "$PROJECT_ID" 2>/dev/null || \
+    printf '%s' "$2" | gcloud secrets versions add "$1" --data-file=- --project "$PROJECT_ID"
+}
 if [ -n "$GEMINI_API_KEY" ]; then
   echo "==> Gemini API key -> Secret Manager"
-  printf '%s' "$GEMINI_API_KEY" | \
-    gcloud secrets create nexora-gemini-api-key --data-file=- --project "$PROJECT_ID" 2>/dev/null || \
-    printf '%s' "$GEMINI_API_KEY" | \
-    gcloud secrets versions add nexora-gemini-api-key --data-file=- --project "$PROJECT_ID"
-  SECRET_FLAG=(--set-secrets "GEMINI_API_KEY=nexora-gemini-api-key:latest")
+  _put_secret nexora-gemini-api-key "$GEMINI_API_KEY"
+  _SECRETS="${_SECRETS:+$_SECRETS,}GEMINI_API_KEY=nexora-gemini-api-key:latest"
+fi
+if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+  echo "==> Google OAuth client -> Secret Manager (LIVE mode enabled on the host)"
+  enable_api secretmanager.googleapis.com required || true
+  _put_secret nexora-google-client-id "$GOOGLE_CLIENT_ID"
+  _put_secret nexora-google-client-secret "$GOOGLE_CLIENT_SECRET"
+  _SECRETS="${_SECRETS:+$_SECRETS,}GOOGLE_CLIENT_ID=nexora-google-client-id:latest,GOOGLE_CLIENT_SECRET=nexora-google-client-secret:latest"
+fi
+if [ -n "$_SECRETS" ]; then
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member "serviceAccount:${SA}" --role roles/secretmanager.secretAccessor --condition=None --quiet || true
+  SECRET_FLAG=(--set-secrets "$_SECRETS")
+else
+  SECRET_FLAG=()
 fi
 
 echo "==> Vertex AI Agent Engine (managed Sessions + Memory Bank)"
@@ -170,12 +190,18 @@ gcloud run deploy nexora-api \
   --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" \
   --service-account "$SA" --timeout 600 --cpu 1 --memory 1Gi \
   --allow-unauthenticated "${SCALING[@]}" "${SECRET_FLAG[@]}" \
-  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=${NEXORA_REPO},NEXORA_DISPATCHER=${NEXORA_DISPATCHER},NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA}${AE_ENV}"
+  --set-env-vars "^@^EXECUTION_MODE=MOCK@NEXORA_REPO=${NEXORA_REPO}@NEXORA_DISPATCHER=${NEXORA_DISPATCHER}@NEXORA_LLM_BACKEND=vertex@GCP_PROJECT_ID=${PROJECT_ID}@GCP_LOCATION=${REGION}@NEXORA_MODEL_T2=gemini-3.5-flash@NEXORA_WORKER_SA=${SA}@CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-https://.*\.vercel\.app}${AE_ENV//,/@}"
 
 URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
 echo "==> Wiring worker URL + zero-trust OIDC gate for /internal/*"
+OAUTH_ENV=""
+if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+  OAUTH_ENV=",NEXORA_OAUTH_REDIRECT=${URL}/api/v1/auth/callback"
+  echo "    LIVE OAuth redirect: ${URL}/api/v1/auth/callback"
+  echo "    ^ add this exact URI to the OAuth client's Authorized redirect URIs."
+fi
 gcloud run services update nexora-api --region "$REGION" --project "$PROJECT_ID" \
-  --update-env-vars "NEXORA_WORKER_URL=${URL},NEXORA_INTERNAL_AUDIENCE=${URL},NEXORA_INTERNAL_SA=${SA}"
+  --update-env-vars "NEXORA_WORKER_URL=${URL},NEXORA_INTERNAL_AUDIENCE=${URL},NEXORA_INTERNAL_SA=${SA}${OAUTH_ENV}"
 
 if [ "$SCHEDULER_OK" = "yes" ]; then
   echo "==> Cloud Scheduler: fire due mission schedules every minute"

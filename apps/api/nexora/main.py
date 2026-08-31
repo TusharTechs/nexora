@@ -199,6 +199,8 @@ async def resolved_config():
         "execution_mode": os.getenv("EXECUTION_MODE", "MOCK"),
         "project": os.getenv("GCP_PROJECT_ID", ""),
         "agent_engine": _agent_engine_id(),
+        # is the LIVE (real Google Workspace) OAuth flow available on this host?
+        "google_oauth": bool(os.getenv("GOOGLE_CLIENT_ID")),
         "models": {
             "reasoning": os.getenv("NEXORA_MODEL_T2", "gemini-3.5-flash"),
             "image": os.getenv("NEXORA_IMAGE_MODEL", "gemini-2.5-flash-image"),
@@ -332,8 +334,13 @@ async def _plan_and_execute(mission: Mission, req: GoalRequest) -> Mission:
         if mission.execution_mode == ExecutionMode.LIVE:
             creds = await LocalCredentialStore().get_google_credentials("default")
             if not creds:
+                if not os.getenv("GOOGLE_CLIENT_ID"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="LIVE mode isn't enabled on this host — switch to MOCK "
+                               "(same reasoning and content), or run LIVE locally (README).")
                 raise HTTPException(status_code=409,
-                                    detail="Google not connected. Open /api/v1/auth/google first.")
+                                    detail="Connect a Google account first, then launch.")
 
         # Mission Workspace (ADR-050): one folder, everything filed inside
         ws = await runtime.registry.provider.ensure_workspace(req.goal)
@@ -575,7 +582,20 @@ async def run_all_benchmarks():
 
 # ---------------- Google OAuth (Phase 9.3) ----------------
 
-REDIRECT_URI = "http://localhost:8000/api/v1/auth/callback"
+def _oauth_redirect_uri() -> str:
+    """Where Google sends the user back after consent. Must exactly match an
+    Authorized redirect URI on the OAuth client. Defaults to localhost for dev;
+    the deployed service sets NEXORA_OAUTH_REDIRECT (or NEXORA_PUBLIC_API_URL)."""
+    explicit = os.getenv("NEXORA_OAUTH_REDIRECT", "").strip()
+    if explicit:
+        return explicit
+    base = os.getenv("NEXORA_PUBLIC_API_URL", "").strip().rstrip("/")
+    if base:
+        return f"{base}/api/v1/auth/callback"
+    return "http://localhost:8000/api/v1/auth/callback"
+
+
+REDIRECT_URI = _oauth_redirect_uri()
 GOOGLE_SCOPES = [
     "openid", "email", "profile",
     "https://www.googleapis.com/auth/drive.file",
@@ -590,13 +610,19 @@ GOOGLE_SCOPES = [
 ]
 
 @app.get("/api/v1/auth/google")
-async def auth_google():
+async def auth_google(return_to: str = ""):
     cid = os.getenv("GOOGLE_CLIENT_ID", "")
     if not cid:
-        raise HTTPException(status_code=409,
-                            detail="Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET in apps/api/.env")
+        raise HTTPException(
+            status_code=409,
+            detail="LIVE mode is not enabled on this deployment. Run it locally "
+                   "with your own OAuth client (see the README), or use MOCK — "
+                   "the reasoning and generated content are identical.")
+    # carry the caller's page through consent so we can bounce back to it
+    state = return_to if return_to.startswith("http") else ""
     q = urlencode({"client_id": cid, "redirect_uri": REDIRECT_URI, "response_type": "code",
-                   "scope": " ".join(GOOGLE_SCOPES), "access_type": "offline", "prompt": "consent"})
+                   "scope": " ".join(GOOGLE_SCOPES), "access_type": "offline",
+                   "prompt": "consent", "state": state})
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{q}")
 
 @app.get("/api/v1/auth/callback", response_class=HTMLResponse)
@@ -620,6 +646,11 @@ async def auth_callback(code: str, state: str = ""):
     token_data["client_secret"] = client_secret
     
     await LocalCredentialStore().store_google_credentials("default", token_data)
+
+    # bounce back to the Command Center that started the flow, if it told us where
+    if state.startswith("http"):
+        sep = "&" if "?" in state else "?"
+        return RedirectResponse(url=f"{state}{sep}google=connected")
     return HTMLResponse("<h2>✅ Google connected</h2><p>You can close this tab and launch a LIVE mission.</p>")
 
 @app.get("/api/v1/auth/status")

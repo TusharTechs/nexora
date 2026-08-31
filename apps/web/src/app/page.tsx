@@ -135,7 +135,27 @@ export default function Home() {
     safeGet(`${API}/api/v1/missions/${mission.mission_id}/audit`).then((d) => setAuditTrail(d ?? []));
   }, [mission?.state]);
 
-  useEffect(() => { safeGet(`${API}/api/v1/auth/status`).then((d) => setGConnected(d?.connected ?? false)); }, []);
+  const checkGoogle = () =>
+    safeGet(`${API}/api/v1/auth/status`).then((d) => setGConnected(d?.connected ?? false));
+  useEffect(() => {
+    checkGoogle();
+    // returning from the OAuth consent screen: ?google=connected
+    if (typeof window !== "undefined" && window.location.search.includes("google=connected")) {
+      setExecMode("LIVE");
+      window.history.replaceState({}, "", window.location.pathname);
+      checkGoogle();
+    }
+    // re-check when the user comes back from the consent tab
+    const onFocus = () => checkGoogle();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  const connectGoogle = () => {
+    const back = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
+    window.open(`${API}/api/v1/auth/google?return_to=${encodeURIComponent(back)}`,
+      "_blank", "noopener");
+  };
 
   const launch = async () => {
     setLoading(true); setError(null); setMission(null);
@@ -234,11 +254,24 @@ export default function Home() {
             🔴 LIVE (real Google)
           </button>
         </section>
-        {execMode === "LIVE" && gConnected === false && (
-          <p className="mb-3 text-center text-xs text-amber-400">
-            ⚠️ LIVE mode needs a Google connection —{" "}
-            <a href={`${API}/api/v1/auth/google`} className="underline">connect now</a>.
+        {execMode === "LIVE" && cfg && cfg.google_oauth === false && (
+          <p className="mb-3 text-center text-xs text-zinc-400">
+            LIVE mode (real Google Workspace) runs locally with your own OAuth client —
+            see the <a href="https://github.com/TusharTechs/nexora#live-mode-real-google-workspace"
+              target="_blank" rel="noreferrer" className="underline">README</a>.
+            This hosted demo runs <span className="text-sky-300">MOCK</span>: the reasoning,
+            planning, verification and generated content are identical — only the files
+            land in a mock workspace instead of your Drive.
           </p>
+        )}
+        {execMode === "LIVE" && cfg?.google_oauth && gConnected === false && (
+          <p className="mb-3 text-center text-xs text-amber-400">
+            ⚠️ LIVE writes real files to the Google account you connect.{" "}
+            <button onClick={connectGoogle} className="underline">Connect Google</button>
+          </p>
+        )}
+        {execMode === "LIVE" && gConnected === true && (
+          <p className="mb-3 text-center text-xs text-emerald-400">● Google connected — LIVE missions will use your Workspace.</p>
         )}
 
         {/* Scenario chips */}
@@ -400,8 +433,8 @@ export default function Home() {
           <div className="flex justify-center gap-6">
             <a href="/scenarios" className="underline hover:text-zinc-300">Scenario Gallery</a>
             <a href="/explorer" className="underline hover:text-zinc-300">Capability Explorer</a>
-            {gConnected === false && (
-              <a href={`${API}/api/v1/auth/google`} className="text-sky-400 underline">🔗 Connect Google</a>
+            {cfg?.google_oauth && gConnected === false && (
+              <button onClick={connectGoogle} className="text-sky-400 underline">🔗 Connect Google</button>
             )}
             {gConnected === true && <span className="text-emerald-400">● Google connected</span>}
           </div>
