@@ -190,7 +190,7 @@ gcloud run deploy nexora-api \
   --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" \
   --service-account "$SA" --timeout 600 --cpu 1 --memory 1Gi \
   --allow-unauthenticated "${SCALING[@]}" "${SECRET_FLAG[@]}" \
-  --set-env-vars "^@^EXECUTION_MODE=MOCK@NEXORA_REPO=${NEXORA_REPO}@NEXORA_DISPATCHER=${NEXORA_DISPATCHER}@NEXORA_LLM_BACKEND=vertex@GCP_PROJECT_ID=${PROJECT_ID}@GCP_LOCATION=${REGION}@NEXORA_MODEL_T2=gemini-3.5-flash@NEXORA_WORKER_SA=${SA}@CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-https://.*\.vercel\.app}${AE_ENV//,/@}"
+  --set-env-vars "EXECUTION_MODE=MOCK,NEXORA_REPO=${NEXORA_REPO},NEXORA_DISPATCHER=${NEXORA_DISPATCHER},NEXORA_LLM_BACKEND=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},NEXORA_MODEL_T2=gemini-3.5-flash,NEXORA_WORKER_SA=${SA},CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-https://.*[.]vercel[.]app}${AE_ENV}"
 
 URL=$(gcloud run services describe nexora-api --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
 echo "==> Wiring worker URL + zero-trust OIDC gate for /internal/*"
